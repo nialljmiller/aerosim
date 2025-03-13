@@ -878,10 +878,31 @@ class CloudSystem:
         # Smooth transition to target strength
         self.wind_strength = 0.95 * self.wind_strength + 0.05 * target_strength                
 
+    # ===============================================================
+    # start_weather_transition method implementation
+    # ===============================================================
+    def start_weather_transition(self, new_weather):
+        """
+        Begin transition to new weather state.
+        
+        Parameters:
+            new_weather (str): The target weather condition to transition to
+        """
+        print(f"Weather transitioning from {self.weather_type} to {new_weather}")
+        self.weather_type = new_weather
+        self.transition_duration = random.uniform(60, 180)  # 1-3 minutes for complete transition
+        
+        # Regenerate clouds to match new weather pattern
+        self.generate_initial_clouds()
 
-
+    # ===============================================================
+    # cleanup method implementation
+    # ===============================================================
     def cleanup(self):
-        """Free OpenGL resources allocated by the cloud system."""
+        """
+        Free OpenGL resources allocated by the cloud system.
+        Prevents memory leaks during program termination.
+        """
         # Release cloud texture
         if self.texture_loaded and self.cloud_texture:
             glDeleteTextures([self.cloud_texture])
@@ -898,4 +919,91 @@ class CloudSystem:
         
         self.cloud_formations = []
         self.precipitation_particles = []
-        self.texture_loaded = False        
+        self.texture_loaded = False
+
+    # ===============================================================
+    # update_precipitation method implementation
+    # ===============================================================
+    def update_precipitation(self, dt, player_position):
+        """
+        Update precipitation particles (rain/snow).
+        
+        Parameters:
+            dt (float): Time delta since last update in seconds
+            player_position (numpy.ndarray): Current player position vector
+        """
+        # Remove particles that have reached the ground or moved too far away
+        self.precipitation_particles = [p for p in self.precipitation_particles 
+                                       if p['lifetime'] > 0 and 
+                                       np.linalg.norm(p['position'] - player_position) < 300]
+        
+        # Update existing particles
+        for particle in self.precipitation_particles:
+            # Update position based on velocity
+            particle['position'] += particle['velocity'] * dt
+            
+            # Check for ground collision
+            if self.terrain:
+                ground_height = self.terrain.get_height(particle['position'][0], particle['position'][2])
+                if particle['position'][1] <= ground_height:
+                    particle['lifetime'] = 0  # Mark for removal
+            else:
+                # If no terrain, remove particles below a certain height
+                if particle['position'][1] < 0:
+                    particle['lifetime'] = 0
+            
+            # Decrease lifetime
+            particle['lifetime'] -= dt
+        
+        # Generate new particles near the player if precipitation is active
+        precipitation_clouds = [c for c in self.cloud_formations 
+                              if c.can_precipitate and 
+                              c.precipitation_intensity > 0 and
+                              np.linalg.norm(c.center_position - player_position) < 300]
+        
+        for cloud in precipitation_clouds:
+            # Calculate number of particles to generate
+            particle_count = int(cloud.precipitation_intensity * 50 * dt)
+            
+            for _ in range(particle_count):
+                # Random position under the cloud
+                cloud_radius = 80 * cloud.size_factor
+                offset_x = random.uniform(-cloud_radius, cloud_radius)
+                offset_z = random.uniform(-cloud_radius, cloud_radius)
+                
+                position = np.array([
+                    cloud.center_position[0] + offset_x,
+                    cloud.center_position[1] - 10,  # Start below cloud
+                    cloud.center_position[2] + offset_z
+                ])
+                
+                # Only add precipitation if position is close enough to player
+                if np.linalg.norm(position - player_position) > 300:
+                    continue
+                
+                # Different properties based on precipitation type
+                if cloud.precipitation_type == "snow":
+                    velocity = np.array([
+                        self.wind_direction[0] * self.wind_strength * 0.3,
+                        -2.0,  # Slower falling
+                        self.wind_direction[2] * self.wind_strength * 0.3
+                    ])
+                    lifetime = random.uniform(4.0, 8.0)
+                    size = random.uniform(0.05, 0.15)
+                else:  # Rain
+                    velocity = np.array([
+                        self.wind_direction[0] * self.wind_strength * 0.2,
+                        -10.0,  # Faster falling
+                        self.wind_direction[2] * self.wind_strength * 0.2
+                    ])
+                    lifetime = random.uniform(2.0, 4.0)
+                    size = random.uniform(0.5, 1.5)
+                
+                # Add new precipitation particle
+                self.precipitation_particles.append({
+                    'position': position,
+                    'velocity': velocity,
+                    'lifetime': lifetime,
+                    'size': size,
+                    'type': cloud.precipitation_type
+                })
