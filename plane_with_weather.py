@@ -619,16 +619,15 @@ def main():
     gluPerspective(45, display[0] / display[1], 0.1, 2000.0)  # Extended far plane for greater view distance
     glMatrixMode(GL_MODELVIEW)
     glEnable(GL_DEPTH_TEST)
-    glClearColor(0.5, 0.7, 1.0, 1.0)  # Sky blue background (will be dynamically changed)
-    
-    # Enable fog for distance fading
-    glEnable(GL_FOG)
-    fog_color = [0.5, 0.7, 1.0, 1.0]  # Match sky color (will be dynamically changed)
+    # Make the sky lighter blue
+    glClearColor(0.7, 0.85, 1.0, 1.0)  # Lighter sky blue background
+
+    # Update fog settings
+    fog_color = [0.7, 0.85, 1.0, 1.0]  # Match sky color
     glFogfv(GL_FOG_COLOR, fog_color)
     glFogi(GL_FOG_MODE, GL_LINEAR)
-    glFogf(GL_FOG_START, 500.0)
-    glFogf(GL_FOG_END, 1500.0)
-    
+    glFogf(GL_FOG_START, 800.0)  # Increased start distance
+    glFogf(GL_FOG_END, 2000.0)   # Increased end distance
     # Initialize celestial system for day/night cycle
     print("Initializing celestial system...")
     celestial = celestial_system.CelestialSystem()
@@ -651,8 +650,12 @@ def main():
     # Initialize cloud and weather system
     print("Initializing cloud and weather system...")
     clouds = cloud_system.CloudSystem(terrain)
-    # Start with clear weather
-    clouds.weather_type = "clear"
+    # Start with fair weather for more visible clouds
+    clouds.weather_type = "fair"
+    # Force texture loading immediately
+    clouds.load_textures()
+
+    
     print("Initializing avian dynamic system...")
     birds = bird_system.BirdSystem(terrain, max_flocks=15)
     

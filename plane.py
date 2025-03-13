@@ -576,6 +576,16 @@ def integrate_day_night_system(main_function_code):
         'new_controls': new_controls
     }
 
+
+
+
+
+
+"""
+Integration helpers for adding the cloud system to the main flight simulator.
+This module provides functions to integrate the cloud system with the existing
+code base with minimal changes to the original structure.
+"""
 def main():
     # Initialize GLUT (required for text rendering)
     glutInit()
@@ -595,7 +605,7 @@ def main():
     pygame.init()
     display = (800, 600)
     pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
-    pygame.display.set_caption("Enhanced Flight Simulator with Day/Night Cycle")
+    pygame.display.set_caption("Enhanced Flight Simulator with Day/Night Cycle and Weather")
 
     # Set up the projection matrix
     glMatrixMode(GL_PROJECTION)
@@ -603,16 +613,16 @@ def main():
     gluPerspective(45, display[0] / display[1], 0.1, 2000.0)  # Extended far plane for greater view distance
     glMatrixMode(GL_MODELVIEW)
     glEnable(GL_DEPTH_TEST)
-    glClearColor(0.5, 0.7, 1.0, 1.0)  # Sky blue background (will be dynamically changed)
-    
-    # Enable fog for distance fading
-    glEnable(GL_FOG)
-    fog_color = [0.5, 0.7, 1.0, 1.0]  # Match sky color (will be dynamically changed)
+    # In your pygame init section:
+    # Use a lighter sky blue
+    glClearColor(0.7, 0.85, 1.0, 1.0)  # Lighter sky blue background
+
+    # Adjust fog settings for better cloud visibility
+    fog_color = [0.7, 0.85, 1.0, 1.0]  # Match sky color
     glFogfv(GL_FOG_COLOR, fog_color)
     glFogi(GL_FOG_MODE, GL_LINEAR)
-    glFogf(GL_FOG_START, 500.0)
-    glFogf(GL_FOG_END, 1500.0)
-    
+    glFogf(GL_FOG_START, 800.0)  # Increased start distance
+    glFogf(GL_FOG_END, 2000.0)   # Increased end distance
     # Initialize celestial system for day/night cycle
     print("Initializing celestial system...")
     celestial = celestial_system.CelestialSystem()
@@ -633,6 +643,16 @@ def main():
     # Initialize bird flocking system
     print("Initializing avian dynamic system...")
     birds = bird_system.BirdSystem(terrain, max_flocks=15)
+        
+    # Initialize cloud and weather system
+    print("Initializing cloud and weather system...")
+    clouds = cloud_system.CloudSystem(terrain)
+    # Start with fair weather for more visible clouds
+    clouds.weather_type = "fair"
+    clouds.load_textures()  # Ensure textures are loaded immediately
+
+    # Create a test cloud if needed for debugging
+    clouds.generate_test_cloud(initial_position)
     
     # Create plane at a safe starting position
     initial_position = [0.0, 30.0, 0.0]  # Start higher for safety
@@ -700,6 +720,12 @@ def main():
                 elif event.key == K_PAGEDOWN:
                     # Go back in time by 1 hour
                     celestial.current_time -= 3600
+                elif event.key == K_w and pygame.key.get_mods() & KMOD_CTRL:
+                    # Cycle through weather types
+                    weather_types = ["clear", "fair", "overcast", "stormy"]
+                    current_idx = weather_types.index(clouds.weather_type)
+                    next_idx = (current_idx + 1) % len(weather_types)
+                    clouds.start_weather_transition(weather_types[next_idx])
 
         # Process controls
         # Mapping: Up/Down control pitch, Left/Right control roll
@@ -763,6 +789,9 @@ def main():
         # Update celestial system
         celestial.update(dt)
         
+        # Update cloud system
+        clouds.update(dt, plane.position)
+        
         # Update fog color based on time of day
         sun_altitude = np.degrees(np.arctan2(celestial.sun.position[1], 
                                              np.sqrt(celestial.sun.position[0]**2 + celestial.sun.position[2]**2)))
@@ -776,6 +805,13 @@ def main():
         
         # Adjust fog distance based on time of day (further during day, closer at night)
         day_factor = max(0, min(1, (sun_altitude + 10) / 20))  # 0 at night, 1 in day
+        
+        # Further reduce visibility in stormy weather
+        if clouds.weather_type == "stormy":
+            day_factor *= 0.5
+        elif clouds.weather_type == "overcast":
+            day_factor *= 0.8
+            
         night_fog_start = 200.0
         day_fog_start = 500.0
         night_fog_end = 800.0
@@ -817,7 +853,8 @@ def main():
             f"Speed: {speed:.1f} m/s | Alt: {height_above_ground:.1f}m AGL | "
             f"Throttle: {plane.throttle*100:.0f}%{glide_info} | "
             f"Damage: {plane.damage*100:.0f}% | "
-            f"Time: {celestial.get_time_of_day_string()}"
+            f"Time: {celestial.get_time_of_day_string()} | "
+            f"Weather: {clouds.weather_type.upper()}"
         )
 
         # Enhanced Camera System with Strict Terrain Collision Prevention
@@ -862,12 +899,15 @@ def main():
 
         # Draw celestial system (sky, sun, moon, stars)
         celestial.draw(cam_position)
-
-        glDisable(GL_LIGHTING)  # Disable lighting for wireframe elements
         
+        # Draw cloud system (between sky dome and terrain)
+        clouds.draw(cam_position)
+
         # Draw terrain with or without wireframe
+        glDisable(GL_LIGHTING)  # Disable lighting for wireframe elements
         terrain.draw(wireframe=wireframe_mode)
         
+
         # Draw trees (only in solid mode)
         if not wireframe_mode:
             # Enable lighting for trees
@@ -891,6 +931,8 @@ def main():
             f"THROTTLE: {plane.throttle*100:.0f}%",
             f"DAMAGE: {plane.damage*100:.0f}%",
             f"TIME: {celestial.get_time_of_day_string()}",
+            f"WEATHER: {clouds.weather_type.upper()}",
+            f"WIND: {clouds.wind_strength:.1f} m/s",
             f"POSITION: X:{plane.position[0]:.0f} Y:{plane.position[1]:.0f} Z:{plane.position[2]:.0f}",
             "",
             "CONTROLS:",
@@ -902,6 +944,7 @@ def main():
             "TAB: TOGGLE WIREFRAME",
             "T: TOGGLE TIME SPEED",
             "PGUP/PGDN: ADV/REW TIME",
+            "CTRL+W: CYCLE WEATHER",
             "R: RESET POSITION",
             "",
             "TERRAIN: PROCEDURAL INFINITE"
@@ -910,13 +953,6 @@ def main():
         # Draw status messages
         fixed_text_position = (initial_position[0] + 50.0, initial_position[1] + 50.0, initial_position[2])
         draw_sky_text(sky_texts, fixed_text_position)
-        
-        # Draw game instructions
-        instruction_texts = [
-            "fly plane terrain",
-            "some text"
-        ]
-        draw_sky_text(instruction_texts, (initial_position[0] + 100.0, initial_position[1] + 30.0, initial_position[2] + 50.0))
         
         # If plane is severely damaged, show warning
         if plane.damage > 0.7:
@@ -934,12 +970,21 @@ def main():
             ]
             draw_sky_text(night_text, (plane.position[0], plane.position[1] + 15, plane.position[2] - 5))
         
+        # Display weather warnings for stormy conditions
+        if clouds.weather_type == "stormy" and not wireframe_mode:
+            storm_text = [
+                "STORM WARNING",
+                "STRONG WINDS & REDUCED VISIBILITY"
+            ]
+            draw_sky_text(storm_text, (plane.position[0], plane.position[1] + 20, plane.position[2] - 5))
+        
         pygame.display.flip()
 
     # Clean up resources
     terrain.cleanup()
     trees.cleanup()
     birds.cleanup()
+    clouds.cleanup()
     pygame.quit()
 
 if __name__ == "__main__":
