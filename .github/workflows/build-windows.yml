@@ -27,7 +27,7 @@ jobs:
         pyinstaller --onefile --name FlightSimulator plane.py
     
     - name: Upload Executable
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v2
       with:
         name: flight-simulator
         path: dist/FlightSimulator.exe
