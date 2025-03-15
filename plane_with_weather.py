@@ -10,7 +10,7 @@ import terrain as plane_terrain
 import model as plane_model
 import tree_system
 import bird_system
-import cloud_system  # Import the cloud and weather system
+import weather_effects as cloud_system  # Import the cloud and weather system
   # New import for bird flocking system
 
 def rotate_vector(v, axis, angle):
@@ -592,107 +592,165 @@ def integrate_day_night_system(main_function_code):
         'new_controls': new_controls
     }
 
+
+
+import numpy as np
+import pygame
+from pygame.locals import *
+from OpenGL.GL import *
+from OpenGL.GLU import *
+from OpenGL.GLUT import *
+import time
+
 def main():
-    # Initialize GLUT (required for text rendering)
+    """Main function to demonstrate the enhanced terrain system."""
+    # Initialize GLUT for text rendering
     glutInit()
     
-    # Simulation parameters
-    params = {
-        'gravity': 9.81,
-        'air_density': 1.225,
-        'mass': 500.0,
-        'wing_area': 50.0,        # Increased from 16.0 - bigger wings for better gliding
-        'drag_coefficient': 0.2,  # Reduced from 0.3 - more aerodynamic for better gliding
-        'lift_coefficient': 1.5,  # Increased from 1.2 - more lift for better gliding
-        'propeller_thrust': 5000.0,
-        'glide_ratio': 15.0,      # Glide ratio (distance:height) - realistic for a light aircraft
-    }
-
+    # Initialize Pygame and OpenGL
     pygame.init()
     display = (800, 600)
     pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
-    pygame.display.set_caption("Enhanced Flight Simulator with Day/Night Cycle")
-
+    pygame.display.set_caption("Enhanced Terrain Demo")
+    
     # Set up the projection matrix
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()
-    gluPerspective(45, display[0] / display[1], 0.1, 2000.0)  # Extended far plane for greater view distance
+    gluPerspective(45, display[0] / display[1], 0.1, 2000.0)
     glMatrixMode(GL_MODELVIEW)
+    
+    # Enable depth testing
     glEnable(GL_DEPTH_TEST)
-    # Make the sky lighter blue
-    glClearColor(0.7, 0.85, 1.0, 1.0)  # Lighter sky blue background
-
-    # Update fog settings
-    fog_color = [0.7, 0.85, 1.0, 1.0]  # Match sky color
+    
+    # Set initial clear color (sky blue)
+    glClearColor(0.7, 0.85, 1.0, 1.0)
+    
+    # Enable fog for distance fading
+    glEnable(GL_FOG)
+    fog_color = [0.7, 0.85, 1.0, 1.0]
     glFogfv(GL_FOG_COLOR, fog_color)
     glFogi(GL_FOG_MODE, GL_LINEAR)
-    glFogf(GL_FOG_START, 800.0)  # Increased start distance
-    glFogf(GL_FOG_END, 2000.0)   # Increased end distance
-    # Initialize celestial system for day/night cycle
-    print("Initializing celestial system...")
-    celestial = celestial_system.CelestialSystem()
-    celestial.initialize()
-    # Set time progression to be faster than real-time for better gameplay
-    celestial.set_time_progression(100.0)  # 100x faster than real time
-    # Start at mid-morning for good lighting
-    celestial.set_time(10)  # 10 AM
-
-    # Initialize infinite terrain system
-    print("Initializing infinite terrain system...")
-    terrain = plane_terrain.InfiniteTerrain(chunk_size=100, resolution=50, view_distance=600)
+    glFogf(GL_FOG_START, 500.0)
+    glFogf(GL_FOG_END, 1500.0)
     
-    # Initialize tree system
-    print("Initializing tree system...")
-    trees = tree_system.TreeSystem(terrain, density=0.008, max_trees_per_chunk=200)
-
-    # Initialize bird flocking system
-
-    # Initialize cloud and weather system
-    print("Initializing cloud and weather system...")
-    clouds = cloud_system.CloudSystem(terrain)
-    # Start with fair weather for more visible clouds
-    clouds.weather_type = "fair"
-    # Force texture loading immediately
-    clouds.load_textures()
-
-    
-    print("Initializing avian dynamic system...")
-    birds = bird_system.BirdSystem(terrain, max_flocks=15)
-    
-    # Create plane at a safe starting position
-    initial_position = [0.0, 30.0, 0.0]  # Start higher for safety
-    initial_velocity = [10.0, 0.0, 0.0]  # Start with some forward velocity
-    forward = [1.0, 0.0, 0.0]
-    up = [0.0, 1.0, 0.0]
-    plane = plane_model.Plane3D(initial_position, initial_velocity, forward, up, params)
-
-    # Camera follow variables
-    cam_smoothness = 0.1
-    cam_position = np.array(initial_position)
-    
-    # Lighting is now handled by the celestial system, but we still need base setup
+    # Basic lighting setup
     glEnable(GL_LIGHTING)
     glEnable(GL_LIGHT0)
     glEnable(GL_COLOR_MATERIAL)
     
-    # Light properties will be updated dynamically by celestial system
-    diffuse_material = [0.8, 0.8, 0.8, 1.0]
-    glMaterialfv(GL_FRONT, GL_DIFFUSE, diffuse_material)
-
+    # Light position (like the sun)
+    light_position = [500.0, 1000.0, 500.0, 0.0]  # Directional light
+    light_ambient = [0.3, 0.3, 0.3, 1.0]
+    light_diffuse = [1.0, 1.0, 0.9, 1.0]
+    
+    glLightfv(GL_LIGHT0, GL_POSITION, light_position)
+    glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient)
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse)
+    
+    # Create the terrain system
+    print("Initializing Enhanced Terrain System...")
+    terrain = enhanced_terrain.EnhancedTerrain(chunk_size=100, resolution=10, view_distance=600)
+    
+    # Camera settings
+    camera_pos = np.array([0.0, 100.0, 0.0])  # Start position
+    camera_yaw = 0.0  # Horizontal rotation (around Y axis)
+    camera_pitch = -30.0  # Vertical rotation (around X axis)
+    camera_speed = 20.0  # Units per second
+    mouse_sensitivity = 0.2
+    
+    # Simulation settings
     clock = pygame.time.Clock()
+    wireframe_mode = False
     running = True
-    wireframe_mode = False  # Toggle for wireframe view
     
-    # Game state tracking
-    game_time = 0.0
+    # Initialize mouse for camera control
+    pygame.mouse.set_visible(False)
+    pygame.event.set_grab(True)
     
-    # Initial terrain update
-    terrain.update_chunks(initial_position)
+    # For smooth frame rate and delta time calculation
+    last_time = time.time()
     
-    while running:
-        dt = clock.tick(60) / 1000.0
-        game_time += dt
+    # Helper function to convert spherical to Cartesian coordinates
+    def get_direction():
+        # Convert degrees to radians
+        yaw_rad = np.radians(camera_yaw)
+        pitch_rad = np.radians(camera_pitch)
         
+        # Calculate direction vector
+        x = np.cos(yaw_rad) * np.cos(pitch_rad)
+        y = np.sin(pitch_rad)
+        z = np.sin(yaw_rad) * np.cos(pitch_rad)
+        
+        return np.array([x, y, z])
+    
+    # Function to draw text on screen (2D overlay)
+    def draw_text(x, y, text, color=(255, 255, 255)):
+        # Switch to 2D orthographic projection for rendering text
+        glDisable(GL_LIGHTING)
+        glDisable(GL_DEPTH_TEST)
+        
+        # Save current matrices
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, display[0], display[1], 0, -1, 1)
+        
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        
+        # Render text using Pygame's font system
+        font = pygame.font.Font(None, 24)
+        text_surface = font.render(text, True, color)
+        text_data = pygame.image.tostring(text_surface, "RGBA", True)
+        
+        # Create texture
+        text_texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, text_texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, text_surface.get_width(), text_surface.get_height(), 
+                    0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+        
+        # Enable blending for transparent background
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Enable texture
+        glEnable(GL_TEXTURE_2D)
+        
+        # Draw textured quad
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex2f(x, y)
+        glTexCoord2f(1, 0); glVertex2f(x + text_surface.get_width(), y)
+        glTexCoord2f(1, 1); glVertex2f(x + text_surface.get_width(), y + text_surface.get_height())
+        glTexCoord2f(0, 1); glVertex2f(x, y + text_surface.get_height())
+        glEnd()
+        
+        # Clean up
+        glDeleteTextures(1, [text_texture])
+        glDisable(GL_TEXTURE_2D)
+        glDisable(GL_BLEND)
+        
+        # Restore matrices
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+        
+        # Restore states
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+    
+    # Main game loop
+    while running:
+        # Calculate delta time
+        current_time = time.time()
+        dt = current_time - last_time
+        last_time = current_time
+        
+        # Process events
         for event in pygame.event.get():
             if event.type == QUIT:
                 running = False
@@ -702,275 +760,101 @@ def main():
                 elif event.key == K_TAB:
                     # Toggle wireframe mode
                     wireframe_mode = not wireframe_mode
-                elif event.key == K_r:
-                    # Reset plane position (for crashes)
-                    plane.position = np.array([0.0, 30.0, 0.0])
-                    plane.velocity = np.array([10.0, 0.0, 0.0])
-                    plane.forward = np.array([1.0, 0.0, 0.0])
-                    plane.up = np.array([0.0, 1.0, 0.0])
-                    plane.right = np.array([0.0, 0.0, 1.0])
-                    plane.throttle = 0.3
-                    plane.damage = 0.0
-                elif event.key == K_t:
-                    # Toggle time progression speed
-                    if celestial.time_scale == 100.0:
-                        celestial.set_time_progression(300.0)  # Very fast
-                    elif celestial.time_scale == 300.0:
-                        celestial.set_time_progression(10.0)   # Slow
-                    else:
-                        celestial.set_time_progression(100.0)  # Normal
-                elif event.key == K_PAGEUP:
-                    # Advance time by 1 hour
-                    celestial.current_time += 3600
-                elif event.key == K_PAGEDOWN:
-                    # Go back in time by 1 hour
-                    celestial.current_time -= 3600
-
-        # Process controls
-        # Mapping: Up/Down control pitch, Left/Right control roll
+                elif event.key == K_w and pygame.key.get_mods() & KMOD_CTRL:
+                    # Toggle water rendering
+                    water_enabled = terrain.toggle_water_rendering()
+                    print(f"Water rendering: {'Enabled' if water_enabled else 'Disabled'}")
+            elif event.type == MOUSEMOTION:
+                # Update camera angles based on mouse movement
+                dx, dy = event.rel
+                camera_yaw += dx * mouse_sensitivity
+                camera_pitch -= dy * mouse_sensitivity
+                
+                # Clamp pitch to prevent flipping
+                camera_pitch = max(-89.0, min(89.0, camera_pitch))
+        
+        # Process keyboard input for movement
         keys = pygame.key.get_pressed()
-
-        # Flight controls
-        pitch = roll = yaw = 0.0
-        control_speed = np.radians(45)  # 45 deg/sec
-        if keys[pygame.K_UP]:
-            pitch = control_speed     # Nose up
-        if keys[pygame.K_DOWN]:
-            pitch = -control_speed    # Nose down
-        if keys[pygame.K_LEFT]:
-            roll = control_speed      # Bank left - CORRECTED DIRECTION
-        if keys[pygame.K_RIGHT]:
-            roll = -control_speed     # Bank right - CORRECTED DIRECTION
-        if keys[pygame.K_a]:
-            yaw = control_speed       # Yaw left
-        if keys[pygame.K_d]:
-            yaw = -control_speed      # Yaw right
-            
-        # Throttle control
-        throttle_increment = 0.05  # 5% throttle change per key press
-        throttle_change = False    # Track if throttle has changed
+        move_dir = np.zeros(3)
         
-        old_throttle = plane.throttle  # Store old throttle value to detect changes
+        # Forward/backward movement along the camera's forward vector
+        direction = get_direction()
+        if keys[K_w] and not pygame.key.get_mods() & KMOD_CTRL:
+            move_dir += direction
+        if keys[K_s]:
+            move_dir -= direction
         
-        if keys[pygame.K_w]:
-            plane.throttle = min(1.0, plane.throttle + throttle_increment * dt * 10)
-            throttle_change = plane.throttle != old_throttle
-        if keys[pygame.K_s]:
-            plane.throttle = max(0.0, plane.throttle - throttle_increment * dt * 10)
-            throttle_change = plane.throttle != old_throttle
-            
-        # Number keys for quick throttle settings
-        if keys[pygame.K_0]:
-            throttle_change = plane.throttle != 0.0
-            plane.throttle = 0.0      # Idle
-        if keys[pygame.K_1]:
-            throttle_change = plane.throttle != 0.1
-            plane.throttle = 0.1      # 10%
-        if keys[pygame.K_2]:
-            throttle_change = plane.throttle != 0.25
-            plane.throttle = 0.25     # 25%
-        if keys[pygame.K_3]:
-            throttle_change = plane.throttle != 0.5
-            plane.throttle = 0.5      # 50%
-        if keys[pygame.K_4]:
-            throttle_change = plane.throttle != 0.75
-            plane.throttle = 0.75     # 75%
-        if keys[pygame.K_5]:
-            throttle_change = plane.throttle != 1.0
-            plane.throttle = 1.0      # 100% (Full throttle)
-            
-        # Apply a small velocity reduction when throttle is decreased significantly
-        if throttle_change and old_throttle > plane.throttle:
-            throttle_reduction = (old_throttle - plane.throttle) * 0.1
-            # Reduce velocity proportionally to throttle reduction
-            plane.velocity *= (1.0 - throttle_reduction)
-
-        # Update celestial system
-        celestial.update(dt)
+        # Strafe left/right perpendicular to camera direction
+        if keys[K_a]:
+            # Calculate right vector from direction (cross product with up)
+            right = np.cross(direction, [0, 1, 0])
+            right = right / np.linalg.norm(right)
+            move_dir -= right
+        if keys[K_d]:
+            right = np.cross(direction, [0, 1, 0])
+            right = right / np.linalg.norm(right)
+            move_dir += right
         
-        # Update fog color based on time of day
-        sun_altitude = np.degrees(np.arctan2(celestial.sun.position[1], 
-                                             np.sqrt(celestial.sun.position[0]**2 + celestial.sun.position[2]**2)))
+        # Up/down movement
+        if keys[K_SPACE]:
+            move_dir[1] += 1.0  # Up
+        if keys[K_LSHIFT]:
+            move_dir[1] -= 1.0  # Down
         
-        # Adjust fog color based on time of day
-        zenith, horizon = celestial.sky_dome.update_colors(sun_altitude)
+        # Normalize and apply movement
+        if np.linalg.norm(move_dir) > 0.0:
+            move_dir = move_dir / np.linalg.norm(move_dir)
+            camera_pos += move_dir * camera_speed * dt
         
-        # Update fog to match sky color at horizon
-        fog_color = [horizon[0], horizon[1], horizon[2], 1.0]
-        glFogfv(GL_FOG_COLOR, fog_color)
+        # Ensure camera doesn't go below terrain
+        terrain_height = terrain.get_height(camera_pos[0], camera_pos[2])
+        water_level = terrain.get_water_level(camera_pos[0], camera_pos[2])
+        min_height = max(terrain_height, water_level) + 2.0  # Stay above terrain or water
         
-        # Adjust fog distance based on time of day (further during day, closer at night)
-        day_factor = max(0, min(1, (sun_altitude + 10) / 20))  # 0 at night, 1 in day
-        night_fog_start = 200.0
-        day_fog_start = 500.0
-        night_fog_end = 800.0
-        day_fog_end = 1500.0
+        if camera_pos[1] < min_height:
+            camera_pos[1] = min_height
         
-        glFogf(GL_FOG_START, night_fog_start + (day_fog_start - night_fog_start) * day_factor)
-        glFogf(GL_FOG_END, night_fog_end + (day_fog_end - night_fog_end) * day_factor)
-
-        # Update terrain chunks based on aircraft position
-        terrain.update_chunks(plane.position)
-
-        # Update tree system
-        trees.update(plane.position)
-        birds.update(dt, plane.position, game_time)
-
-        # Update cloud and weather system
-        clouds.update(dt, celestial.current_time / (24 * 60 * 60), plane.position)
+        # Update terrain chunks based on camera position
+        terrain.update_chunks(camera_pos)
         
-        # Apply controls with roll inversion for correct visual feedback
-        plane.apply_controls(pitch, -roll, yaw, dt)  # Notice the negated roll input
+        # Update water animation
+        terrain.update_water_animation(dt)
         
-        # Update plane with custom terrain-aware physics
-        update_with_terrain(plane, dt, terrain)
-
-        # Get current speed for display and calculations
-        speed = np.linalg.norm(plane.velocity)
-        altitude = plane.position[1]
-        ground_height = terrain.get_height(plane.position[0], plane.position[2])
-        height_above_ground = altitude - ground_height
+        # Get biome information at camera position
+        current_biome = terrain.get_biome_at(camera_pos[0], camera_pos[2])
         
-        # Add debug info about current glide status
-        glide_info = ""
-        if plane.throttle < 0.1 and speed > 5.0:
-            horizontal_velocity = np.array([plane.velocity[0], 0, plane.velocity[2]])
-            horizontal_speed = np.linalg.norm(horizontal_velocity)
-            vertical_speed = abs(plane.velocity[1]) if plane.velocity[1] < 0 else 0.1
-            current_glide_ratio = horizontal_speed / vertical_speed
-            glide_info = f" | GLIDING: {current_glide_ratio:.1f}:1"
-        
-        # Update window caption with flight information
-        pygame.display.set_caption(
-            f"Speed: {speed:.1f} m/s | Alt: {height_above_ground:.1f}m AGL | "
-            f"Throttle: {plane.throttle*100:.0f}%{glide_info} | "
-            f"Damage: {plane.damage*100:.0f}% | "
-            f"Time: {celestial.get_time_of_day_string()}"
-        )
-
-        # Enhanced Camera System with Strict Terrain Collision Prevention
-        # Calculate desired camera position (15 units behind, 3 units above)
-        camera_offset = plane.forward * -15 + plane.up * 3
-        target_cam_pos = plane.position + camera_offset
-        
-        # Check terrain height at desired camera position BEFORE applying smoothing
-        terrain_height_at_target = terrain.get_height(target_cam_pos[0], target_cam_pos[2])
-        min_camera_height = terrain_height_at_target + 2.0  # Increased clearance to 2.0 units
-        
-        # Apply height constraint to target position first
-        if target_cam_pos[1] < min_camera_height:
-            height_correction = min_camera_height - target_cam_pos[1]
-            target_cam_pos[1] = min_camera_height
-            
-            # Optional: Adjust look target slightly upward when camera is terrain-constrained
-            look_adjustment = height_correction * 0.2
-            target_look_point = plane.position + plane.forward * 5 + np.array([0, look_adjustment, 0])
-        else:
-            # Normal look target slightly ahead of the plane
-            target_look_point = plane.position + plane.forward * 5
-        
-        # Apply camera smoothing AFTER terrain constraint
-        cam_smoothness = 0.2
-        cam_position += (target_cam_pos - cam_position) * cam_smoothness
-        
-        # Apply a SECOND terrain check after smoothing for absolute prevention
-        terrain_height_at_camera = terrain.get_height(cam_position[0], cam_position[2])
-        absolute_min_height = terrain_height_at_camera + 1.0
-        if cam_position[1] < absolute_min_height:
-            cam_position[1] = absolute_min_height
-        
-        # Clear screen and prepare for rendering
+        # Clear screen
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
         
-        # Position camera
-        gluLookAt(cam_position[0], cam_position[1], cam_position[2],
-                target_look_point[0], target_look_point[1], target_look_point[2],
-                0, 1, 0)
-
-        # Draw celestial system (sky, sun, moon, stars)
-        celestial.draw(cam_position)
-
-        glDisable(GL_LIGHTING)  # Disable lighting for wireframe elements
+        # Set camera position and orientation
+        look_at = camera_pos + get_direction()
+        gluLookAt(camera_pos[0], camera_pos[1], camera_pos[2],
+                 look_at[0], look_at[1], look_at[2],
+                 0, 1, 0)
         
-        # Draw terrain with or without wireframe
-        terrain.draw(wireframe=wireframe_mode)
+        # Draw terrain
+        terrain.draw(wireframe_mode)
         
-        # Draw trees (only in solid mode)
-        if not wireframe_mode:
-            # Enable lighting for trees
-            glEnable(GL_LIGHTING)
-            trees.draw(cam_position)
-            glDisable(GL_LIGHTING)
+        # Draw on-screen help text
+        draw_text(5, 5, f"Current Biome: {current_biome}")
+        draw_text(5, 25, f"Position: {camera_pos[0]:.1f}, {camera_pos[1]:.1f}, {camera_pos[2]:.1f}")
+        draw_text(5, 45, f"Controls: WASD=Move, Space/Shift=Up/Down, Tab=Wireframe, Ctrl+W=Toggle Water")
         
-           # Draw bird flocks
-            glEnable(GL_LIGHTING)
-            birds.draw(cam_position)
-            glDisable(GL_LIGHTING)
+        # Update window caption with information
+        pygame.display.set_caption(
+            f"Enhanced Terrain Demo | "
+            f"Position: ({camera_pos[0]:.1f}, {camera_pos[1]:.1f}, {camera_pos[2]:.1f}) | "
+            f"Biome: {current_biome} | "
+            f"FPS: {clock.get_fps():.1f}"
+        )
         
-        # Draw plane
-        draw_plane(plane)
-        
-        # Draw sky text with flight information and controls
-        sky_texts = [
-            "ENHANCED FLIGHT SIMULATOR",
-            f"SPEED: {speed:.1f} m/s",
-            f"ALTITUDE: {height_above_ground:.1f}m AGL",
-            f"THROTTLE: {plane.throttle*100:.0f}%",
-            f"DAMAGE: {plane.damage*100:.0f}%",
-            f"TIME: {celestial.get_time_of_day_string()}",
-            f"POSITION: X:{plane.position[0]:.0f} Y:{plane.position[1]:.0f} Z:{plane.position[2]:.0f}",
-            "",
-            "CONTROLS:",
-            "UP/DOWN: PITCH",
-            "LEFT/RIGHT: ROLL",
-            "A/D: YAW",
-            "W/S: THROTTLE UP/DOWN",
-            "0-5: THROTTLE PRESETS",
-            "TAB: TOGGLE WIREFRAME",
-            "T: TOGGLE TIME SPEED",
-            "PGUP/PGDN: ADV/REW TIME",
-            "R: RESET POSITION",
-            "",
-            "TERRAIN: PROCEDURAL INFINITE"
-        ]
-        
-        # Draw status messages
-        fixed_text_position = (initial_position[0] + 50.0, initial_position[1] + 50.0, initial_position[2])
-        draw_sky_text(sky_texts, fixed_text_position)
-        
-        # Draw game instructions
-        instruction_texts = [
-            "fly plane terrain",
-            "some text"
-        ]
-        draw_sky_text(instruction_texts, (initial_position[0] + 100.0, initial_position[1] + 30.0, initial_position[2] + 50.0))
-        
-        # If plane is severely damaged, show warning
-        if plane.damage > 0.7:
-            warning_texts = [
-                "WARNING: AIRCRAFT SEVERELY DAMAGED",
-                "PRESS R TO RESET"
-            ]
-            draw_sky_text(warning_texts, (plane.position[0], plane.position[1] + 10, plane.position[2]))
-        
-        # Display night flying warning when appropriate
-        if celestial.is_night() and not wireframe_mode:
-            night_text = [
-                "NIGHT FLIGHT IN PROGRESS",
-                "REDUCED VISIBILITY"
-            ]
-            draw_sky_text(night_text, (plane.position[0], plane.position[1] + 15, plane.position[2] - 5))
-        
+        # Swap buffers and tick the clock
         pygame.display.flip()
-
+        clock.tick(60)
+    
     # Clean up resources
     terrain.cleanup()
-    trees.cleanup()
-    birds.cleanup()
-
-    # Clean up cloud system resources
-    clouds.cleanup()
     pygame.quit()
 
 if __name__ == "__main__":
