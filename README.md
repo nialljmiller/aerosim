@@ -5,8 +5,8 @@ A procedurally generated flight simulator with dynamic weather, day/night cycles
 ![Flight Simulator Screenshot](https://example.com/screenshot.jpg) <!-- You can add a screenshot here -->
 
 ## Download
+[Download Flight Simulator for Windows](https://github.com/nialljmiller/aerosim/releases/download/latest/FlightSimulator.exe)
 
-**[Click here to download the latest Windows executable](https://github.com/nialljmiller/aerosim/releases/latest/download/FlightSimulator.exe)**
 
 ## Features
 
