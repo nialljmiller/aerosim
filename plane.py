@@ -523,8 +523,8 @@ def main():
         'mass': 500.0,
         'wing_area': 50.0,        # Increased for better gliding
         'drag_coefficient': 0.2,  # Reduced for better gliding
-        'lift_coefficient': 1.5,  # Increased for better gliding 
-        'propeller_thrust': 5000.0,
+        'lift_coefficient': 1.2,  # Increased for better gliding 
+        'propeller_thrust': 6000.0,
         'glide_ratio': 15.0,      # Glide ratio (distance:height)
     }
 
