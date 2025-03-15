@@ -26,8 +26,12 @@ jobs:
       run: |
         pyinstaller --onefile --name FlightSimulator plane.py
     
-    - name: Upload Executable
-      uses: actions/upload-artifact@v2
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
       with:
-        name: flight-simulator
-        path: dist/FlightSimulator.exe
+        files: ./dist/FlightSimulator.exe
+        name: Flight Simulator Build
+        tag_name: build-${{ github.run_number }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
