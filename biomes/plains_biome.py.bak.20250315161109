@@ -1,0 +1,199 @@
+"""
+Plains Biome for Flight Simulator - Adjusted for higher terrain elevations
+Creates gently rolling hills with broad, gradual elevation changes.
+"""
+
+import numpy as np
+import math
+import sys
+import os
+
+# Ensure biomes directory is in path
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from biomes.biome_base import BaseBiome
+
+class PlainsBiome(BaseBiome):
+    """Plains biome with expansive rolling hills."""
+    
+    def __init__(self):
+        super().__init__()
+        self.name = "plains"
+        
+        # Plains-specific parameters - INCREASED heights
+        self.height_scale = 25.0         # Increased from 15.0 for higher hills
+        self.noise_scale = 0.0015        # Scale for very broad hills
+        self.hill_wavelength = 0.0008    # Controls how spread out the hills are
+        
+        # Maximum elevation change (approximately) - INCREASED
+        self.max_elevation_change = 20.0  # Doubled from 10.0 for more dramatic terrain
+        
+        # River system parameters
+        self.river_depth = 6.0  # Increased from 4.0 for deeper rivers
+        self.river_width = 0.04
+        
+        # Plains colors
+        self.colors = {
+            'grass': (0.4, 0.7, 0.3),      # Bright green
+            'dirt': (0.6, 0.5, 0.3),       # Brown
+            'field': (0.7, 0.7, 0.3),      # Yellow-green (crops)
+            'water': (0.2, 0.5, 0.8),      # Blue water
+            'forest': (0.2, 0.5, 0.2)      # Dark green patches
+        }
+        
+        # Height thresholds for plains terrain types - ADJUSTED FOR HIGHER TERRAIN
+        self.thresholds = {
+            'water_level': 0.0,      # Below this is ponds/lakes
+            'low_ground': 10.0,      # Wet lowlands - increased from 5.0
+            'high_ground': 20.0      # Drier higher areas - increased from 10.0
+        }
+    
+    def get_height(self, world_x, world_z):
+        """Generate plains terrain with broad, gentle hills."""
+        # Import noise here to avoid circular imports
+        from terrain import PerlinNoise
+        noise = PerlinNoise(seed=42)
+        
+        # Base terrain - very broad, gentle hills
+        # Using a much smaller noise scale for wider hills
+        base_noise = noise.fractal(
+            world_x * self.hill_wavelength, 
+            world_z * self.hill_wavelength,
+            octaves=3,            # Fewer octaves for smoother hills
+            persistence=0.4,      # Lower persistence for gentler changes
+            lacunarity=1.8        # Slightly lower lacunarity for broader features
+        )
+        
+        # Scale the base noise to our target height range (now 0-20m variation)
+        base_height = base_noise * self.max_elevation_change
+        
+        # Add very subtle medium-scale variations
+        medium_detail = noise.fractal(
+            world_x * self.noise_scale * 2, 
+            world_z * self.noise_scale * 2,
+            octaves=2,
+            persistence=0.3
+        ) * 2.5  # Increased from 1.5 for more noticeable variations
+        
+        # Very subtle small details for ground texture
+        small_detail = noise.fractal(
+            world_x * self.noise_scale * 8, 
+            world_z * self.noise_scale * 8,
+            octaves=2,
+            persistence=0.2
+        ) * 0.8  # Increased from 0.5 for more texture
+        
+        # Field patterns - agricultural fields and clearings
+        field_pattern = noise.fractal(
+            world_x * self.noise_scale * 0.5, 
+            world_z * self.noise_scale * 0.5,
+            octaves=1,
+            persistence=0.5
+        )
+        
+        # Use field pattern to flatten certain areas slightly
+        field_factor = 0
+        if field_pattern > 0.6:
+            field_strength = (field_pattern - 0.6) * 2.5
+            field_factor = field_strength * 0.7  # Flatten by reducing variation
+            
+        # River system with branching
+        river_noise = noise.fractal(
+            world_x * self.noise_scale * 1.5 + 500, 
+            world_z * self.noise_scale * 1.5 + 500,
+            octaves=2
+        )
+        
+        # Apply river carving - only carve if above water level
+        river_factor = 0
+        if 0.48 < river_noise < 0.48 + self.river_width:
+            # Create a river that follows the terrain but cuts slightly into it
+            t = (river_noise - 0.48) / self.river_width
+            river_factor = (1.0 - 4 * (t - 0.5) * (t - 0.5)) * self.river_depth
+        
+        # Add a base height to ensure all terrain starts above a minimum
+        # INCREASED to make all terrain significantly higher
+        base_elevation = 20.0  # Much higher base elevation (from 12.0)
+        
+        # Combine noise components with careful scaling
+        combined = base_elevation + base_height + (medium_detail + small_detail) * (1.0 - field_factor * 0.5)
+        
+        # Apply water features - but ensure we don't go below minimum height
+        if river_factor > 0:
+            river_depth = min(river_factor, combined - 5.0)  # Don't cut below a safe minimum
+            combined = combined - river_depth
+        
+        # Ensure minimum terrain height is always above a safe value
+        return max(5.0, combined)  # Increased minimum from 3.0 to 5.0
+    
+    def get_color(self, world_x, world_z, height):
+        """Get plains colors based on height and position."""
+        # Import noise here to avoid circular imports
+        from terrain import PerlinNoise
+        noise = PerlinNoise(seed=42)
+        
+        # Generate noise for terrain features
+        feature_noise = noise.fractal(
+            world_x * self.noise_scale * 6, 
+            world_z * self.noise_scale * 6,
+            octaves=2
+        ) * 0.5 + 0.5  # Normalize to 0-1
+        
+        # Field/farm pattern
+        field_pattern = noise.fractal(
+            world_x * self.noise_scale * 0.5, 
+            world_z * self.noise_scale * 0.5,
+            octaves=1
+        )
+        
+        # River detection for water coloring
+        river_noise = noise.fractal(
+            world_x * self.noise_scale * 1.5 + 500, 
+            world_z * self.noise_scale * 1.5 + 500,
+            octaves=2
+        )
+        
+        # Check for river
+        is_river = 0.48 < river_noise < 0.48 + self.river_width
+        
+        # Determine base color by height and features
+        if height < self.thresholds['water_level'] or is_river:
+            # Water (rivers, ponds, lakes)
+            return self.colors['water']
+        elif field_pattern > 0.6:
+            # Agricultural fields
+            field_type = feature_noise
+            if field_type > 0.7:
+                # Crops/wheat fields (yellowish)
+                return self.colors['field']
+            else:
+                # Regular grass fields
+                return self.colors['grass']
+        elif height < self.thresholds['low_ground']:
+            # Low ground - darker, wetter soil
+            blend = (height - self.thresholds['water_level']) / (self.thresholds['low_ground'] - self.thresholds['water_level'])
+            return self.interpolate_color(self.colors['dirt'], self.colors['grass'], blend)
+        elif height > self.thresholds['high_ground']:
+            # Higher ground - drier
+            if feature_noise > 0.7:
+                # Forest patches on hills
+                return self.colors['forest']
+            else:
+                # Regular grass, slightly yellower at higher elevations
+                blend = min(1.0, (height - self.thresholds['high_ground']) / 8.0)
+                return self.interpolate_color(self.colors['grass'], self.colors['field'], blend)
+        else:
+            # Default grassland
+            return self.colors['grass']
+    
+    def detect_river(self, world_x, world_z):
+        """Helper method to detect if a point is in a river."""
+        from terrain import PerlinNoise
+        noise = PerlinNoise(seed=42)
+        
+        river_noise = noise.fractal(
+            world_x * self.noise_scale * 1.5 + 500, 
+            world_z * self.noise_scale * 1.5 + 500,
+            octaves=2
+        )
+        
+        return 0.48 < river_noise < 0.48 + self.river_width
