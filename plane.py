@@ -9,7 +9,7 @@ import random
 import sys
 import time
 
-# Import modules from the current directory
+
 try:
     import celestial_system
     import terrain as plane_terrain
@@ -610,6 +610,17 @@ def main():
     clouds.load_textures()
     print(f"Cloud texture ID: {clouds.cloud_texture}")
     
+
+    # Initialize water system
+    print("Initializing water system...")
+    try:
+        water = water_system.WaterSystem(water_level=5.0, size=10000.0)
+    except Exception as e:
+        print(f"Error initializing water system: {e}")
+        water = None  # Continue without water
+
+
+
     # Create plane at a safe starting position
     print("Creating plane...")
     initial_position = [0.0, 50.0, 0.0]  # Start higher for safety
@@ -816,6 +827,15 @@ def main():
             except Exception as e:
                 print(f"Error updating terrain: {e}")
 
+            # Update water system
+            if water is not None:
+                try:
+                    water.update(dt, camera_position)
+                except Exception as e:
+                    print(f"Error updating water: {e}")
+
+
+
             # Update additional systems
             if trees is not None:
                 try:
@@ -934,12 +954,19 @@ def main():
 
             # Disable lighting for wireframe elements
             glDisable(GL_LIGHTING)
-            
+                        
             # Draw terrain with or without wireframe
             try:
                 terrain.draw(wireframe=wireframe_mode)
             except Exception as e:
                 print(f"Error drawing terrain: {e}")
+
+            # Draw water
+            if water is not None:
+                try:
+                    water.draw(camera_position)
+                except Exception as e:
+                    print(f"Error drawing water: {e}")
             
             # Draw trees (only in solid mode)
             if not wireframe_mode and trees is not None:
@@ -1093,13 +1120,17 @@ def main():
             birds.cleanup()
         except Exception as e:
             print(f"Error cleaning up birds: {e}")
+
+
+    if water is not None:
+        try:
+            water.cleanup()
+        except Exception as e:
+            print(f"Error cleaning up water: {e}")
+
     clouds.cleanup()            
     pygame.quit()
     print("Flight simulator terminated.")
-
-
-
-
 
 if __name__ == "__main__":
     main()
