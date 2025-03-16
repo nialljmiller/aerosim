@@ -17,6 +17,7 @@ try:
     import tree_system
     import bird_system
     import weather_effects as cloud_system  # Import the cloud and weather system
+    import water_system
 except ImportError as e:
     print(f"Import error: {e}")
     print("Please ensure all required modules are in the current directory.")
@@ -830,7 +831,7 @@ def main():
             # Update water system
             if water is not None:
                 try:
-                    water.update(dt, camera_position)
+                    water.update(dt, cam_position)
                 except Exception as e:
                     print(f"Error updating water: {e}")
 
@@ -961,12 +962,10 @@ def main():
             except Exception as e:
                 print(f"Error drawing terrain: {e}")
 
-            # Draw water
-            if water is not None:
-                try:
-                    water.draw(camera_position)
-                except Exception as e:
-                    print(f"Error drawing water: {e}")
+            try:
+                water.draw(cam_position)
+            except Exception as e:
+                print(f"Error drawing water: {e}")
             
             # Draw trees (only in solid mode)
             if not wireframe_mode and trees is not None:
