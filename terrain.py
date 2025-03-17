@@ -96,10 +96,301 @@ class PerlinNoise:
         # Normalize the result
         return total / max_value
 
+
+
+
+class InfiniteTerrain:
+    """Infinite terrain system with LOD support."""
+    
+    def __init__(self, chunk_size=100, resolution=5, view_distance=800):
+        self.chunk_size = chunk_size
+        self.resolution = resolution
+        self.view_distance = view_distance
+        
+        # Seed for consistent terrain generation
+        self.seed = 42
+        self.noise = PerlinNoise(seed=self.seed)
+        
+        # Initialize biome manager if available
+        self.biome_manager = None
+        if has_biome_manager:
+            try:
+                self.biome_manager = BiomeManager(self.noise, biome_scale=2000.0)
+                print("Biome manager initialized successfully")
+            except Exception as e:
+                print(f"Error initializing biome manager: {e}")
+                self.biome_manager = None
+        
+        # Dictionary to store loaded chunks
+        self.chunks = {}
+        
+        # Track the center position for chunk loading/unloading
+        self.last_center_chunk = None
+        
+        # NEW: Track chunks that are in the process of being loaded
+        self.loading_chunks = {}
+        
+        # NEW: LOD settings
+        self.lod_levels = 4  # Number of detail levels (from coarse to fine)
+        self.lod_distances = [1.0, 0.6, 0.3, 0.0]  # Distance thresholds as percentage of view distance
+        self.chunk_load_queue = []  # Queue for progressive loading
+        self.max_chunks_per_frame = 2  # Limit chunk generation per frame
+        
+        # NEW: Dictionary to track the LOD level of each chunk
+        self.chunk_lod = {}
+
+    def get_chunk_position(self, world_x, world_z):
+        """Convert world coordinates to chunk coordinates."""
+        chunk_x = math.floor(world_x / self.chunk_size)
+        chunk_z = math.floor(world_z / self.chunk_size)
+        return chunk_x, chunk_z
+
+    def get_or_create_chunk(self, chunk_x, chunk_z):
+        """Get an existing chunk or create a new one if it doesn't exist."""
+        chunk_key = (chunk_x, chunk_z)
+        if chunk_key not in self.chunks and chunk_key not in self.loading_chunks:
+            # Start with lowest LOD for immediate display
+            self._create_chunk_with_lod(chunk_key, 0)
+            # Queue for higher detail if needed
+            self.chunk_load_queue.append((chunk_key, self.lod_levels - 1))
+            
+        return self.chunks.get(chunk_key, None)
+    
+    def update_chunks(self, camera_position):
+        """Update which chunks are loaded based on camera position and distance."""
+        # Get chunk coordinates for camera position
+        center_chunk_x, center_chunk_z = self.get_chunk_position(
+            camera_position[0], camera_position[2]
+        )
+        center_chunk = (center_chunk_x, center_chunk_z)
+        
+        # If center hasn't changed, just process the load queue
+        if center_chunk == self.last_center_chunk:
+            self._process_load_queue()
+            return
+        
+        self.last_center_chunk = center_chunk
+        
+        # Calculate view distance in chunks
+        chunk_view_distance = math.ceil(self.view_distance / self.chunk_size)
+        
+        # NEW: Calculate LOD distance thresholds in chunks
+        lod_thresholds = [int(chunk_view_distance * d) for d in self.lod_distances]
+        
+        # NEW: Determine which chunks should be loaded at each LOD level
+        chunks_by_lod = {lod: set() for lod in range(self.lod_levels)}
+        
+        for x in range(center_chunk_x - chunk_view_distance, center_chunk_x + chunk_view_distance + 1):
+            for z in range(center_chunk_z - chunk_view_distance, center_chunk_z + chunk_view_distance + 1):
+                # Calculate distance from center chunk
+                dx = x - center_chunk_x
+                dz = z - center_chunk_z
+                distance = math.sqrt(dx*dx + dz*dz)
+                
+                # Skip chunks outside the view distance
+                if distance > chunk_view_distance:
+                    continue
+                    
+                # Determine LOD level based on distance
+                chunk_lod = self.lod_levels - 1  # Default to highest detail
+                for i, threshold in enumerate(lod_thresholds):
+                    if distance > threshold:
+                        chunk_lod = i
+                        break
+                
+                chunks_by_lod[chunk_lod].add((x, z))
+        
+        # NEW: Add chunks to the load queue with priority based on LOD
+        self.chunk_load_queue = []
+        
+        # Add chunks in order of LOD (highest detail first for chunks closest to camera)
+        for lod in reversed(range(self.lod_levels)):
+            for chunk_key in chunks_by_lod[lod]:
+                # Check if the chunk exists but needs more detail
+                if chunk_key in self.chunks and chunk_key in self.chunk_lod:
+                    current_lod = self.chunk_lod[chunk_key]
+                    # If current LOD is lower detail than needed, queue for refinement
+                    if current_lod < lod:
+                        self.chunk_load_queue.append((chunk_key, lod))
+                # If chunk doesn't exist at all, queue for initial load at low detail
+                elif chunk_key not in self.chunks and chunk_key not in self.loading_chunks:
+                    # Start with lowest detail for new chunks
+                    self.chunk_load_queue.append((chunk_key, 0))
+        
+        # NEW: Unload chunks that are too far away
+        chunks_to_unload = set(self.chunks.keys())
+        for lod in range(self.lod_levels):
+            chunks_to_unload -= chunks_by_lod[lod]
+        
+        for chunk_key in chunks_to_unload:
+            # Clean up OpenGL resources
+            self.chunks[chunk_key].cleanup()
+            # Remove from dictionaries
+            del self.chunks[chunk_key]
+            if chunk_key in self.chunk_lod:
+                del self.chunk_lod[chunk_key]
+        
+        # Process a limited number of chunks in the queue
+        self._process_load_queue()
+    
+    def _process_load_queue(self):
+        """Process a limited number of chunks from the load queue each frame."""
+        chunks_processed = 0
+        
+        while self.chunk_load_queue and chunks_processed < self.max_chunks_per_frame:
+            chunk_key, target_lod = self.chunk_load_queue.pop(0)
+            
+            # If chunk exists, check if we need to increase its detail
+            if chunk_key in self.chunks and chunk_key in self.chunk_lod:
+                current_lod = self.chunk_lod[chunk_key]
+                
+                # If current LOD is already higher than or equal to target, skip
+                if current_lod >= target_lod:
+                    continue
+                
+                # Otherwise, increase LOD level by 1 step for smooth transition
+                new_lod = current_lod + 1
+                
+                # Clean up old chunk
+                self.chunks[chunk_key].cleanup()
+                
+                # Create chunk with higher detail
+                self._create_chunk_with_lod(chunk_key, new_lod)
+                
+            # If chunk doesn't exist, create it at the requested LOD
+            else:
+                self._create_chunk_with_lod(chunk_key, target_lod)
+            
+            chunks_processed += 1
+            
+            # If we need higher LOD for this chunk later, re-queue it
+            if chunk_key in self.chunk_lod and self.chunk_lod[chunk_key] < target_lod:
+                self.chunk_load_queue.append((chunk_key, target_lod))
+    
+    def _create_chunk_with_lod(self, chunk_key, lod_level):
+        """Create a terrain chunk with the specified level of detail."""
+        # Mark chunk as being loaded
+        self.loading_chunks[chunk_key] = True
+        
+        # Calculate resolution based on LOD level
+        # LOD 0 = lowest detail (coarsest resolution)
+        # LOD (lod_levels-1) = highest detail (finest resolution)
+        lod_factor = (lod_level / (self.lod_levels - 1)) if self.lod_levels > 1 else 1.0
+        
+        # Adjust resolution based on LOD level (higher LOD = finer resolution)
+        # For LOD 0, use 1/4 of the resolution, for max LOD use full resolution
+        chunk_resolution = self.resolution * (0.25 + 0.75 * lod_factor)
+        chunk_resolution = max(2, int(chunk_resolution))  # Ensure minimum resolution
+        
+        # Create the chunk with appropriate detail level
+        chunk_x, chunk_z = chunk_key
+        new_chunk = TerrainChunk(
+            chunk_x, chunk_z, 
+            self.chunk_size, 
+            chunk_resolution,
+            self.noise,
+            terrain=self
+        )
+        
+        # Store the chunk and its LOD level
+        self.chunks[chunk_key] = new_chunk
+        self.chunk_lod[chunk_key] = lod_level
+        
+        # Remove from loading marker
+        if chunk_key in self.loading_chunks:
+            del self.loading_chunks[chunk_key]
+
+    def get_height(self, world_x, world_z):
+        """Get terrain height at any world position."""
+        # Use biome manager if available
+        if self.biome_manager is not None:
+            try:
+                return self.biome_manager.get_height(world_x, world_z)
+            except Exception as e:
+                print(f"Error in biome height generation: {e}")
+                # Fall back to chunk-based height if biome manager fails
+        
+        # Original chunk-based method as fallback
+        chunk_x, chunk_z = self.get_chunk_position(world_x, world_z)
+        chunk_key = (chunk_x, chunk_z)
+        
+        # If the chunk is loaded, query it
+        if chunk_key in self.chunks:
+            return self.chunks[chunk_key].get_height(world_x, world_z)
+        
+        # For unloaded chunks, generate height on-the-fly
+        noise_scale = 0.005
+        height_scale = 40.0
+        
+        # A simplified version of the chunk terrain generation
+        base_height = self.noise.fractal(
+            world_x * noise_scale, 
+            world_z * noise_scale,
+            octaves=4
+        ) * height_scale
+        
+        # Ensure minimum height
+        return max(0.5, base_height)
+
+    def get_terrain_normal(self, world_x, world_z):
+        """Calculate terrain normal at any world position."""
+        # Use the height-based gradient method regardless of whether biome manager
+        # is used, since we need to be consistent with get_height method
+        
+        # For unloaded chunks, calculate normal on-the-fly
+        epsilon = 0.1  # Small offset for normal calculation
+        
+        # Get heights at nearby points
+        h_center = self.get_height(world_x, world_z)
+        h_dx = self.get_height(world_x + epsilon, world_z)
+        h_dz = self.get_height(world_x, world_z + epsilon)
+        
+        # Calculate partial derivatives
+        dx = (h_dx - h_center) / epsilon
+        dz = (h_dz - h_center) / epsilon
+        
+        # Cross product to get normal vector
+        normal = np.array([-dx, 1.0, -dz])
+        
+        # Normalize the normal vector
+        length = np.sqrt(normal[0]**2 + normal[1]**2 + normal[2]**2)
+        if length > 0:
+            normal = normal / length
+        else:
+            normal = np.array([0, 1, 0])  # Default up normal
+            
+        return normal
+
+    def get_current_biome(self, world_x, world_z):
+        """Get the biome type at the specified world position."""
+        if self.biome_manager is not None:
+            try:
+                return self.biome_manager.get_biome_at_position(world_x, world_z)
+            except Exception as e:
+                print(f"Error getting biome at position: {e}")
+                return "unknown"
+        return "default"  # Default if biome manager is not available
+    
+    def draw(self, wireframe=False):
+        """Draw all loaded terrain chunks."""
+        for chunk in self.chunks.values():
+            chunk.draw(wireframe)
+    
+    def cleanup(self):
+        """Free all OpenGL resources."""
+        for chunk in self.chunks.values():
+            chunk.cleanup()
+        self.chunks.clear()
+
+
+
+
+
+
+
 class TerrainChunk:
-    """Individual chunk of procedurally generated terrain."""
-
-
+    """Individual chunk of procedurally generated terrain with LOD support."""
+    
     def __init__(self, chunk_x, chunk_z, chunk_size, resolution, noise_generator, terrain=None):
         self.chunk_x = chunk_x  # Chunk position in world (grid coordinates)
         self.chunk_z = chunk_z
@@ -120,11 +411,21 @@ class TerrainChunk:
         self.display_list_solid = None
         self.display_list_wireframe = None
         
+        # NEW: Transition alpha for smooth LOD blending
+        self.transition_alpha = 0.0
+        self.transition_target = 1.0
+        self.transition_speed = 2.0  # Units per second
+        
         # Generate heightmap and colors
         self.generate_data()
         self.compile_display_lists()
-
-   
+    
+    def update(self, dt):
+        """Update transition alpha for smooth LOD changes."""
+        if self.transition_alpha < self.transition_target:
+            self.transition_alpha = min(self.transition_target, 
+                                        self.transition_alpha + self.transition_speed * dt)
+    
     def generate_data(self):
         """Generate heightmap and color data for this chunk."""
         # Calculate grid size within this chunk
@@ -215,7 +516,6 @@ class TerrainChunk:
                     
                     # Assign color based on height and features
                     self.assign_color(i, j, height, river_factor > 0)
-
     
     def assign_color(self, i, j, height, is_river):
         """Assign colors based on terrain features."""
@@ -440,9 +740,23 @@ class TerrainChunk:
         
         glEnd()
         glEndList()
-    
+
+
     def draw(self, wireframe=False):
-        """Draw the terrain chunk."""
+        """Draw the terrain chunk with smooth transitions for LOD changes."""
+        # Skip if not yet fully initialized
+        if self.display_list_solid is None or self.display_list_wireframe is None:
+            return
+            
+        # Apply fade-in effect for new chunks
+        # Save the current OpenGL state
+        blend_enabled = glIsEnabled(GL_BLEND)
+        if self.transition_alpha < 1.0:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            # Apply alpha based on transition state
+            glColor4f(1.0, 1.0, 1.0, self.transition_alpha)
+        
         if wireframe:
             # Draw wireframe
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
@@ -451,196 +765,16 @@ class TerrainChunk:
         else:
             # Draw solid terrain
             glCallList(self.display_list_solid)
+        
+        # Restore OpenGL state
+        if not blend_enabled and self.transition_alpha < 1.0:
+            glDisable(GL_BLEND)
     
     def cleanup(self):
         """Free OpenGL resources."""
         if self.display_list_solid:
             glDeleteLists(self.display_list_solid, 1)
+            self.display_list_solid = None
         if self.display_list_wireframe:
             glDeleteLists(self.display_list_wireframe, 1)
-
-class InfiniteTerrain:
-
-    def __init__(self, chunk_size=100, resolution=5, view_distance=800):
-        self.chunk_size = chunk_size
-        self.resolution = resolution
-        self.view_distance = view_distance
-        
-        # Seed for consistent terrain generation
-        self.seed = 42
-        self.noise = PerlinNoise(seed=self.seed)
-        
-        # Initialize biome manager if available
-        self.biome_manager = None
-        if has_biome_manager:
-            try:
-                self.biome_manager = BiomeManager(self.noise, biome_scale=2000.0)
-                print("Biome manager initialized successfully")
-            except Exception as e:
-                print(f"Error initializing biome manager: {e}")
-                self.biome_manager = None
-        
-        # Dictionary to store loaded chunks
-        self.chunks = {}
-        
-        # Track the center position for chunk loading/unloading
-        self.last_center_chunk = None
-
-    def get_chunk_position(self, world_x, world_z):
-        """Convert world coordinates to chunk coordinates."""
-        chunk_x = math.floor(world_x / self.chunk_size)
-        chunk_z = math.floor(world_z / self.chunk_size)
-        return chunk_x, chunk_z
-
-
-    def get_or_create_chunk(self, chunk_x, chunk_z):
-        """Get an existing chunk or create a new one if it doesn't exist."""
-        chunk_key = (chunk_x, chunk_z)
-        if chunk_key not in self.chunks:
-            # Create new chunk with reference to self (terrain)
-            self.chunks[chunk_key] = TerrainChunk(
-                chunk_x, chunk_z, 
-                self.chunk_size, 
-                self.resolution,
-                self.noise,
-                terrain=self  # Pass reference to self
-            )
-        return self.chunks[chunk_key]
-
-    
-    def update_chunks(self, camera_position):
-        """Update which chunks are loaded based on camera position."""
-        # Get chunk coordinates for camera position
-        center_chunk_x, center_chunk_z = self.get_chunk_position(
-            camera_position[0], camera_position[2]
-        )
-        center_chunk = (center_chunk_x, center_chunk_z)
-        
-        # If center hasn't changed, no need to update chunks
-        if center_chunk == self.last_center_chunk:
-            return
-        
-        self.last_center_chunk = center_chunk
-        
-        # Calculate view distance in chunks
-        chunk_view_distance = math.ceil(self.view_distance / self.chunk_size)
-        
-        # Determine which chunks should be loaded
-        chunks_to_load = set()
-        for x in range(center_chunk_x - chunk_view_distance, center_chunk_x + chunk_view_distance + 1):
-            for z in range(center_chunk_z - chunk_view_distance, center_chunk_z + chunk_view_distance + 1):
-                # Calculate distance from center chunk
-                dx = x - center_chunk_x
-                dz = z - center_chunk_z
-                distance = math.sqrt(dx*dx + dz*dz)
-                
-                # Only load chunks within view distance
-                if distance <= chunk_view_distance:
-                    chunks_to_load.add((x, z))
-        
-        # Unload chunks that are too far away
-        chunks_to_unload = set(self.chunks.keys()) - chunks_to_load
-        for chunk_key in chunks_to_unload:
-            # Clean up OpenGL resources
-            self.chunks[chunk_key].cleanup()
-            # Remove from dictionary
-            del self.chunks[chunk_key]
-
-
-
-                
-        # NEW: Limit the number of new chunks per frame to reduce stuttering
-        max_chunks_per_frame = 2  # Only load 2 new chunks per frame to spread the load
-        chunk_count = 0
-        # Load new chunks
-        for chunk_key in chunks_to_load:
-            chunk_count =+1
-            if chunk_key not in self.chunks:
-                self.get_or_create_chunk(*chunk_key)
-            if chunk_count == max_chunks_per_frame:
-                break
-
-
-    def get_height(self, world_x, world_z):
-        """Get terrain height at any world position."""
-        # Use biome manager if available
-        if self.biome_manager is not None:
-            try:
-                return self.biome_manager.get_height(world_x, world_z)
-            except Exception as e:
-                print(f"Error in biome height generation: {e}")
-                # Fall back to chunk-based height if biome manager fails
-        
-        # Original chunk-based method as fallback
-        chunk_x, chunk_z = self.get_chunk_position(world_x, world_z)
-        chunk_key = (chunk_x, chunk_z)
-        
-        # If the chunk is loaded, query it
-        if chunk_key in self.chunks:
-            return self.chunks[chunk_key].get_height(world_x, world_z)
-        
-        # For unloaded chunks, generate height on-the-fly
-        noise_scale = 0.005
-        height_scale = 40.0
-        
-        # A simplified version of the chunk terrain generation
-        base_height = self.noise.fractal(
-            world_x * noise_scale, 
-            world_z * noise_scale,
-            octaves=4
-        ) * height_scale
-        
-        # Ensure minimum height
-        return max(0.5, base_height)
-
-    # In the InfiniteTerrain class, update the get_terrain_normal method:
-    def get_terrain_normal(self, world_x, world_z):
-        """Calculate terrain normal at any world position."""
-        # Use the height-based gradient method regardless of whether biome manager
-        # is used, since we need to be consistent with get_height method
-        
-        # For unloaded chunks, calculate normal on-the-fly
-        epsilon = 0.1  # Small offset for normal calculation
-        
-        # Get heights at nearby points
-        h_center = self.get_height(world_x, world_z)
-        h_dx = self.get_height(world_x + epsilon, world_z)
-        h_dz = self.get_height(world_x, world_z + epsilon)
-        
-        # Calculate partial derivatives
-        dx = (h_dx - h_center) / epsilon
-        dz = (h_dz - h_center) / epsilon
-        
-        # Cross product to get normal vector
-        normal = np.array([-dx, 1.0, -dz])
-        
-        # Normalize the normal vector
-        length = np.sqrt(normal[0]**2 + normal[1]**2 + normal[2]**2)
-        if length > 0:
-            normal = normal / length
-        else:
-            normal = np.array([0, 1, 0])  # Default up normal
-            
-        return normal
-
-    # Add this method to InfiniteTerrain class to get the current biome:
-    def get_current_biome(self, world_x, world_z):
-        """Get the biome type at the specified world position."""
-        if self.biome_manager is not None:
-            try:
-                return self.biome_manager.get_biome_at_position(world_x, world_z)
-            except Exception as e:
-                print(f"Error getting biome at position: {e}")
-                return "unknown"
-        return "default"  # Default if biome manager is not available
-    
-    def draw(self, wireframe=False):
-        """Draw all loaded terrain chunks."""
-        for chunk in self.chunks.values():
-            chunk.draw(wireframe)
-    
-    def cleanup(self):
-        """Free all OpenGL resources."""
-        for chunk in self.chunks.values():
-            chunk.cleanup()
-        self.chunks.clear()
+            self.display_list_wireframe = None

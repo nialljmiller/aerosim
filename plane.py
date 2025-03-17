@@ -350,7 +350,6 @@ def resolve_collisions(plane, dt):
 
 
 
-
 def main():
     """Main function for the flight simulator."""
     # Initialize GLUT for text rendering
@@ -379,22 +378,26 @@ def main():
         print(f"Error setting up display: {e}")
         sys.exit(1)
 
-    # Set up the projection matrix
+    # Set up the projection matrix with extended far plane
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()
-    gluPerspective(45, display[0] / display[1], 0.1, 2000.0)  # Extended far plane
+    # Increase far plane distance to match our extended view range
+    gluPerspective(45, display[0] / display[1], 0.1, 3000.0)  # Extended from 2000 to 3000
     glMatrixMode(GL_MODELVIEW)
     glEnable(GL_DEPTH_TEST)
     glClearColor(0.5, 0.7, 1.0, 1.0)  # Sky blue background
     
-    # Enable fog for distance fading
-    print("Setting up fog...")
+    # Enable enhanced fog for distance fading
+    print("Setting up improved fog...")
     glEnable(GL_FOG)
     fog_color = [0.5, 0.7, 1.0, 1.0]  # Match sky color
     glFogfv(GL_FOG_COLOR, fog_color)
-    glFogi(GL_FOG_MODE, GL_LINEAR)
-    glFogf(GL_FOG_START, 500.0)
-    glFogf(GL_FOG_END, 1500.0)
+    # Use EXP2 fog for more realistic distance falloff
+    glFogi(GL_FOG_MODE, GL_EXP2)
+    # Adjust fog density for a good balance of visibility
+    glFogf(GL_FOG_DENSITY, 0.0008)
+    # Set fog hints for better quality
+    glHint(GL_FOG_HINT, GL_NICEST)
     
     # Initialize celestial system for day/night cycle
     print("Initializing celestial system...")
@@ -409,10 +412,11 @@ def main():
         print(f"Error initializing celestial system: {e}")
         celestial = None  # Continue without celestial system
 
-    # Initialize infinite terrain system
+    # Initialize infinite terrain system with increased view distance
     print("Initializing terrain system...")
     try:
-        terrain = plane_terrain.InfiniteTerrain(chunk_size=100, resolution=50, view_distance=600)
+        # Increase view distance for farther visibility
+        terrain = plane_terrain.InfiniteTerrain(chunk_size=100, resolution=50, view_distance=1200)
     except Exception as e:
         print(f"Error initializing terrain: {e}")
         sys.exit(1)
@@ -451,7 +455,6 @@ def main():
     clouds.load_textures()
     print(f"Cloud texture ID: {clouds.cloud_texture}")
     
-
     # Initialize water system
     print("Initializing water system...")
     try:
@@ -459,8 +462,6 @@ def main():
     except Exception as e:
         print(f"Error initializing water system: {e}")
         water = None  # Continue without water
-
-
 
     # Create plane at a safe starting position
     print("Creating plane...")
@@ -502,11 +503,28 @@ def main():
     except Exception as e:
         print(f"Error updating terrain chunks: {e}")
     
+    # Performance monitoring variables
+    frame_times = []
+    fps_update_timer = 0
+    current_fps = 0
+    
     print("Entering main game loop...")
     while running:
         try:
+            # Time tracking for this frame
+            frame_start = time.time()
             dt = clock.tick(60) / 1000.0
             game_time += dt
+            
+            # Update FPS counter every second
+            fps_update_timer += dt
+            if fps_update_timer >= 1.0:
+                if frame_times:
+                    current_fps = len(frame_times)
+                    avg_frame_time = sum(frame_times) / len(frame_times)
+                    print(f"FPS: {current_fps}, Avg frame time: {avg_frame_time*1000:.1f}ms")
+                frame_times = []
+                fps_update_timer = 0
             
             for event in pygame.event.get():
                 if event.type == QUIT:
@@ -577,6 +595,23 @@ def main():
                         # Force clear weather
                         clouds.start_weather_transition("clear")
                         print("Clearing up the skies!")
+                    # LOD control for testing
+                    elif event.key == K_l and pygame.key.get_mods() & KMOD_CTRL:
+                        # Cycle through max chunks per frame for LOD loading
+                        if terrain.max_chunks_per_frame == 2:
+                            terrain.max_chunks_per_frame = 5
+                        elif terrain.max_chunks_per_frame == 5:
+                            terrain.max_chunks_per_frame = 10
+                        else:
+                            terrain.max_chunks_per_frame = 2
+                        print(f"LOD chunks per frame set to: {terrain.max_chunks_per_frame}")
+                    elif event.key == K_v and pygame.key.get_mods() & KMOD_CTRL:
+                        # Toggle extended view distance
+                        if terrain.view_distance == 1200:
+                            terrain.view_distance = 2000
+                        else:
+                            terrain.view_distance = 1200
+                        print(f"View distance set to: {terrain.view_distance}")
 
             # Process controls
             # Mapping: Up/Down control pitch, Left/Right control roll
@@ -652,19 +687,27 @@ def main():
                 fog_color = [horizon[0], horizon[1], horizon[2], 1.0]
                 glFogfv(GL_FOG_COLOR, fog_color)
                 
-                # Adjust fog distance based on time of day (further during day, closer at night)
+                # Adjust fog density based on time of day and altitude
                 day_factor = max(0, min(1, (sun_altitude + 10) / 20))  # 0 at night, 1 in day
-                night_fog_start = 200.0
-                day_fog_start = 500.0
-                night_fog_end = 800.0
-                day_fog_end = 1500.0
+                height_above_ground = plane.position[1] - terrain.get_height(plane.position[0], plane.position[2])
+                altitude_factor = min(1.0, height_above_ground / 200.0)  # Less fog at higher altitudes
                 
-                glFogf(GL_FOG_START, night_fog_start + (day_fog_start - night_fog_start) * day_factor)
-                glFogf(GL_FOG_END, night_fog_end + (day_fog_end - night_fog_end) * day_factor)
+                base_density_night = 0.0015
+                base_density_day = 0.0008
+                
+                # Interpolate fog density based on time of day and altitude
+                fog_density = base_density_night * (1.0 - day_factor) + base_density_day * day_factor
+                fog_density *= (1.0 - altitude_factor * 0.5)  # Reduce fog at altitude
+                
+                glFogf(GL_FOG_DENSITY, fog_density)
 
-            # Update terrain chunks based on aircraft position
+            # Update terrain chunks based on aircraft position with progressive LOD
             try:
                 terrain.update_chunks(plane.position)
+                
+                # Update transition states for all visible chunks
+                for chunk in terrain.chunks.values():
+                    chunk.update(dt)
             except Exception as e:
                 print(f"Error updating terrain: {e}")
 
@@ -674,8 +717,6 @@ def main():
                     water.update(dt, cam_position)
                 except Exception as e:
                     print(f"Error updating water: {e}")
-
-
 
             # Update additional systems
             if trees is not None:
@@ -691,7 +732,7 @@ def main():
                     print(f"Error updating birds: {e}")
                  
             # Update cloud and weather system
-            clouds.update(dt, celestial.current_time / (24 * 60 * 60), plane.position)
+            clouds.update(dt, celestial.current_time / (24 * 60 * 60) if celestial else game_time, plane.position)
             
             # Apply controls with roll inversion for correct visual feedback
             plane.apply_controls(pitch, -roll, yaw, dt)  # Notice the negated roll input
@@ -714,16 +755,23 @@ def main():
                 current_glide_ratio = horizontal_speed / vertical_speed
                 glide_info = f" | GLIDING: {current_glide_ratio:.1f}:1"
             
-
             # Update window caption with flight information
             time_str = ""
             if celestial is not None:
                 time_str = f" | Time: {celestial.get_time_of_day_string()}"
                 
+            # Add LOD info
+            lod_info = f" | Chunks: {len(terrain.chunks)}"
+            if hasattr(terrain, 'chunk_load_queue'):
+                lod_info += f" | Queue: {len(terrain.chunk_load_queue)}"
+            
+            # Add FPS info
+            fps_info = f" | FPS: {current_fps}"
+                
             pygame.display.set_caption(
                 f"Speed: {speed:.1f} m/s | Alt: {height_above_ground:.1f}m AGL | "
                 f"Throttle: {plane.throttle*100:.0f}%{glide_info} | "
-                f"Damage: {plane.damage*100:.0f}%{time_str}"
+                f"Damage: {plane.damage*100:.0f}%{time_str}{lod_info}{fps_info}"
             )
 
             # Enhanced Camera System with Strict Terrain Collision Prevention
@@ -748,7 +796,6 @@ def main():
                 target_look_point = plane.position + plane.forward * 5
             
             # Apply camera smoothing AFTER terrain constraint
-            cam_smoothness = 0.2
             cam_position += (target_cam_pos - cam_position) * cam_smoothness
             
             # Apply a SECOND terrain check after smoothing for absolute prevention
@@ -790,7 +837,8 @@ def main():
                 print(f"Error drawing terrain: {e}")
 
             try:
-                water.draw(cam_position)
+                if water is not None:
+                    water.draw(cam_position)
             except Exception as e:
                 print(f"Error drawing water: {e}")
             
@@ -828,7 +876,6 @@ def main():
                 
             time_info = f"TIME: {celestial.get_time_of_day_string()}" if celestial is not None else ""
             
-
             sky_texts = [
                 "FLIGHT SIMULATOR",
                 f"SPEED: {speed:.1f} m/s",
@@ -836,8 +883,9 @@ def main():
                 f"THROTTLE: {plane.throttle*100:.0f}%",
                 f"DAMAGE: {plane.damage*100:.0f}%",
                 time_info,
+                f"TERRAIN LOD: CHUNKS: {len(terrain.chunks)}, QUEUE: {len(terrain.chunk_load_queue)}",
+                f"FPS: {current_fps}"
             ]
-
 
             sky_texts.extend([
                 f"POSITION: X:{plane.position[0]:.0f} Y:{plane.position[1]:.0f} Z:{plane.position[2]:.0f}",
@@ -853,7 +901,14 @@ def main():
                 "TAB: TOGGLE WIREFRAME",
                 "R: RESET POSITION",
                 "",
-                "TERRAIN: PROCEDURAL INFINITE"
+                "ADVANCED CONTROLS:",
+                "CTRL+W: CYCLE WEATHER",
+                "CTRL+C: CLEAR WEATHER",
+                "CTRL+X: EXTREME WEATHER",
+                "CTRL+L: TOGGLE LOD SPEED",
+                "CTRL+V: TOGGLE VIEW DISTANCE",
+                "",
+                "TERRAIN: PROGRESSIVE LOD"
             ])
             
             # Only add time controls if celestial system is available
@@ -892,9 +947,13 @@ def main():
                 except Exception as e:
                     print(f"Error drawing night text: {e}")
             
-
             # Update the display
             pygame.display.flip()
+            
+            # Measure frame time for performance tracking
+            frame_end = time.time()
+            frame_time = frame_end - frame_start
+            frame_times.append(frame_time)
             
         except Exception as e:
             print(f"Error in main loop: {e}")
@@ -919,7 +978,6 @@ def main():
         except Exception as e:
             print(f"Error cleaning up birds: {e}")
 
-
     if water is not None:
         try:
             water.cleanup()
@@ -929,7 +987,6 @@ def main():
     clouds.cleanup()            
     pygame.quit()
     print("Flight simulator terminated.")
-
 if __name__ == "__main__":
     main()
 
