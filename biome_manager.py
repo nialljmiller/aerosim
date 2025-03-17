@@ -51,14 +51,19 @@ except ImportError:
 
 class BiomeManager:
     """Manages biome creation, transitions, and selection for the terrain system."""
-    
-    def __init__(self, noise_generator, biome_scale=2000.0):
-        """Initialize the biome manager.
         
-        Args:
-            noise_generator: PerlinNoise instance for consistent noise generation
-            biome_scale: Controls how large each biome region is (larger = bigger biomes)
-        """
+    def __init__(self, noise_generator, biome_scale=2000.0):
+        """Initialize the biome manager."""
+        # Existing code...
+        
+        # NEW: Add height and color caches for better performance
+        self.height_cache = {}
+        self.color_cache = {}
+        self.cache_size = 10000  # Maximum cache entries to prevent memory issues
+        
+        # NEW: Track frame number for cache purging
+        self.frame_counter = 0
+        
         self.noise = noise_generator
         self.biome_scale = biome_scale
         self.cached_biomes = {}  # Cache for biome instances by type
@@ -245,9 +250,17 @@ class BiomeManager:
         # Cache the result
         self.biome_map_cache[grid_key] = biome_type
         return biome_type
-    
+        
     def get_height(self, world_x, world_z):
         """Get terrain height at the specified world coordinates."""
+        # NEW: Add caching for height values
+        # Round coordinates to reduce cache size while maintaining precision
+        cache_key = (round(world_x, 1), round(world_z, 1))
+        
+        # Check if we already calculated this height
+        if cache_key in self.height_cache:
+            return self.height_cache[cache_key]
+        
         # Get biome weights for this location
         biome_weights = self._get_biome_blend_weights(world_x, world_z)
         
@@ -255,19 +268,32 @@ class BiomeManager:
         if len(biome_weights) == 1:
             biome_type = list(biome_weights.keys())[0]
             biome = self._get_biome_instance(biome_type)
-            return biome.get_height(world_x, world_z)
+            height = biome.get_height(world_x, world_z)
+        else:
+            # Otherwise blend heights from multiple biomes
+            height = 0.0
+            for biome_type, weight in biome_weights.items():
+                biome = self._get_biome_instance(biome_type)
+                biome_height = biome.get_height(world_x, world_z)
+                height += biome_height * weight
         
-        # Otherwise blend heights from multiple biomes
-        blended_height = 0.0
-        for biome_type, weight in biome_weights.items():
-            biome = self._get_biome_instance(biome_type)
-            biome_height = biome.get_height(world_x, world_z)
-            blended_height += biome_height * weight
-            
-        return blended_height
-    
+        # Cache the result if cache isn't too large
+        if len(self.height_cache) < self.cache_size:
+            self.height_cache[cache_key] = height
+        
+        return height
+
     def get_color(self, world_x, world_z, height):
         """Get terrain color at the specified world coordinates."""
+        # NEW: Add caching for color values
+        # Round coordinates to reduce cache size while maintaining precision
+        cache_key = (round(world_x, 1), round(world_z, 1), round(height, 1))
+        
+        # Check if we already calculated this color
+        if cache_key in self.color_cache:
+            return self.color_cache[cache_key]
+        
+        # Original color calculation
         # Get biome weights for this location
         biome_weights = self._get_biome_blend_weights(world_x, world_z)
         
@@ -275,23 +301,40 @@ class BiomeManager:
         if len(biome_weights) == 1:
             biome_type = list(biome_weights.keys())[0]
             biome = self._get_biome_instance(biome_type)
-            return biome.get_color(world_x, world_z, height)
+            color = biome.get_color(world_x, world_z, height)
+        else:
+            # Otherwise blend colors from multiple biomes
+            r, g, b = 0.0, 0.0, 0.0
+            for biome_type, weight in biome_weights.items():
+                biome = self._get_biome_instance(biome_type)
+                biome_color = biome.get_color(world_x, world_z, height)
+                
+                # Add weighted color components
+                r += biome_color[0] * weight
+                g += biome_color[1] * weight
+                b += biome_color[2] * weight
+            
+            color = (r, g, b)
         
-        # Otherwise blend colors from multiple biomes
-        r, g, b = 0.0, 0.0, 0.0
-        for biome_type, weight in biome_weights.items():
-            biome = self._get_biome_instance(biome_type)
-            biome_color = biome.get_color(world_x, world_z, height)
-            
-            # Add weighted color components
-            r += biome_color[0] * weight
-            g += biome_color[1] * weight
-            b += biome_color[2] * weight
-            
-        return (r, g, b)
+        # Cache the result if cache isn't too large
+        if len(self.color_cache) < self.cache_size:
+            self.color_cache[cache_key] = color
+        
+        return color
+
     
     def get_biome_at_position(self, world_x, world_z):
         """Get the primary biome type at the given world position."""
         grid_x = int(world_x / self.biome_scale)
         grid_z = int(world_z / self.biome_scale)
         return self._get_biome_at_grid(grid_x, grid_z)
+
+    def update_frame(self):
+        """Update frame counter and purge caches when needed."""
+        self.frame_counter += 1
+        
+        # Clear caches every 1000 frames to prevent memory issues
+        if self.frame_counter % 1000 == 0:
+            self.height_cache.clear()
+            self.color_cache.clear()
+        

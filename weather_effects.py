@@ -936,54 +936,73 @@ class CloudSystem:
         self.cloud_formations.append(cloud)
         return cloud
     
+
+
     def update(self, dt, time_of_day, player_position):
         """Update all aspects of the cloud and weather system."""
         # Ensure textures are loaded
         if not self.texture_loaded:
             self.load_textures()
             
-        # Update weather conditions
-        self.update_weather_conditions(dt)
+        # Only update weather conditions occasionally to save CPU
+        if random.random() < 0.05:  # Now only checking 5% of the time
+            self.update_weather_conditions(dt)
         
-        # Update wind
-        self.update_wind(dt)
+        # Update wind less frequently
+        if random.random() < 0.1:  # Only update wind 10% of frames
+            self.update_wind(dt)
+        
+        # Optimization: Only process clouds within a certain radius of player
+        active_radius = 2000  # Reduced from 3000
         
         # Update cloud formations
         for cloud in self.cloud_formations:
-            cloud.update(dt, self.wind_direction, self.wind_strength)
+            if np.linalg.norm(cloud.center_position - player_position) < active_radius:
+                cloud.update(dt, self.wind_direction, self.wind_strength)
         
         # Remove clouds that have moved too far away
         self.cloud_formations = [cloud for cloud in self.cloud_formations
-                                if np.linalg.norm(cloud.center_position - player_position) < 3000]
+                                if np.linalg.norm(cloud.center_position - player_position) < active_radius]
         
-        # Add new clouds if needed
-        if len(self.cloud_formations) < 30:
-            # Generate a new cloud at the edge of view distance
-            spawn_angle = random.uniform(0, 2 * math.pi)
-            spawn_distance = 1500
-            x = player_position[0] + math.cos(spawn_angle) * spawn_distance
-            z = player_position[2] + math.sin(spawn_angle) * spawn_distance
-            
-            # Cloud height based on type
-            if random.random() < 0.3:
-                cloud_type = "cirrus"
-                y = random.uniform(150, 250)
-            elif random.random() < 0.6 and self.weather_type in ["overcast", "stormy", "extreme"]:
-                if self.weather_type == "extreme":
-                    cloud_type = "tornado" if random.random() < 0.3 else "cumulonimbus"
+        # Only add new clouds if we have fewer than max
+        if len(self.cloud_formations) < 20:  # Reduced from 30
+            # Generate a new cloud only sometimes (not every frame)
+            if random.random() < 0.05:  # 5% chance per frame
+                # Generate a new cloud at the edge of view distance
+                spawn_angle = random.uniform(0, 2 * math.pi)
+                spawn_distance = 1500
+                x = player_position[0] + math.cos(spawn_angle) * spawn_distance
+                z = player_position[2] + math.sin(spawn_angle) * spawn_distance
+                
+                # Cloud height based on type
+                if random.random() < 0.3:
+                    cloud_type = "cirrus"
+                    y = random.uniform(150, 250)
+                elif random.random() < 0.6 and self.weather_type in ["overcast", "stormy", "extreme"]:
+                    if self.weather_type == "extreme":
+                        cloud_type = "tornado" if random.random() < 0.3 else "cumulonimbus"
+                    else:
+                        cloud_type = "cumulonimbus" if self.weather_type == "stormy" else "stratus"
+                    y = random.uniform(40, 100)
                 else:
-                    cloud_type = "cumulonimbus" if self.weather_type == "stormy" else "stratus"
-                y = random.uniform(40, 100)
-            else:
-                cloud_type = "cumulus"
-                y = random.uniform(60, 150)
-            
-            size_factor = random.uniform(0.8, 1.5)
-            self.add_cloud(cloud_type, [x, y, z], size_factor)
+                    cloud_type = "cumulus"
+                    y = random.uniform(60, 150)
+                
+                size_factor = random.uniform(0.8, 1.5)
+                self.add_cloud(cloud_type, [x, y, z], size_factor)
         
-        # Update precipitation
-        self.update_precipitation(dt, player_position)
-    
+        # Update precipitation less often
+        if random.random() < 0.3:  # Only 30% of frames
+            self.update_precipitation(dt, player_position)
+
+
+
+
+
+
+
+
+
     def update_weather_conditions(self, dt):
         """Update weather conditions based on time and possible transitions."""
         # Adjust transition timer

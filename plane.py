@@ -874,20 +874,7 @@ def main():
                 current_glide_ratio = horizontal_speed / vertical_speed
                 glide_info = f" | GLIDING: {current_glide_ratio:.1f}:1"
             
-            # Get gear and flaps status for window caption
-            gear_caption = ""
-            if hasattr(plane, 'gear_state'):
-                if plane.gear_state > 0.99:
-                    gear_caption = " | GEAR: DOWN"
-                elif plane.gear_state < 0.01:
-                    gear_caption = " | GEAR: UP" 
-                else:
-                    gear_caption = f" | GEAR: {int(plane.gear_state * 100)}%"
 
-            flaps_caption = ""
-            if hasattr(plane, 'flaps'):
-                flaps_caption = f" | FLAPS: {int(plane.flaps * 100)}%"
-            
             # Update window caption with flight information
             time_str = ""
             if celestial is not None:
@@ -896,7 +883,7 @@ def main():
             pygame.display.set_caption(
                 f"Speed: {speed:.1f} m/s | Alt: {height_above_ground:.1f}m AGL | "
                 f"Throttle: {plane.throttle*100:.0f}%{glide_info} | "
-                f"Damage: {plane.damage*100:.0f}%{gear_caption}{flaps_caption}{time_str}"
+                f"Damage: {plane.damage*100:.0f}%{time_str}"
             )
 
             # Enhanced Camera System with Strict Terrain Collision Prevention

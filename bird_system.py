@@ -647,11 +647,15 @@ class BirdSystem:
         self.flocks.append(new_flock)
         return new_flock
     
+
     def update(self, dt, player_position, current_time):
         """Update all bird flocks."""
         # Update spawn cooldown
         if self.spawn_cooldown > 0:
             self.spawn_cooldown -= dt
+        
+        # NEW: Limit processing to flocks within range
+        active_radius = 1000  # Reduced from 1500
         
         # Check for flocks that have moved too far away and remove them
         flocks_to_remove = []
@@ -659,26 +663,26 @@ class BirdSystem:
         for flock in self.flocks:
             distance = np.linalg.norm(np.array(flock.center_position) - np.array(player_position))
             
-            if distance > self.active_radius * 1.5:
+            if distance > active_radius * 1.5:
                 flocks_to_remove.append(flock)
             else:
                 # Activate/deactivate based on distance for performance
-                flock.active = distance < self.active_radius
+                flock.active = distance < active_radius
         
         # Remove far-away flocks
         for flock in flocks_to_remove:
             if flock in self.flocks:
                 self.flocks.remove(flock)
         
-        # Spawn new flocks occasionally
+        # Spawn new flocks occasionally - but less frequently
         if (len(self.flocks) < self.max_flocks and 
             self.spawn_cooldown <= 0 and 
-            random.random() < 0.01):
+            random.random() < 0.005):  # Reduced from 0.01
             
             # Spawn at edge of active area in random direction
             spawn_angle = random.uniform(0, 2 * math.pi)
-            spawn_x = player_position[0] + math.cos(spawn_angle) * self.active_radius
-            spawn_z = player_position[2] + math.sin(spawn_angle) * self.active_radius
+            spawn_x = player_position[0] + math.cos(spawn_angle) * active_radius
+            spawn_z = player_position[2] + math.sin(spawn_angle) * active_radius
             
             # Get terrain height
             ground_y = 0
@@ -692,12 +696,21 @@ class BirdSystem:
             self.spawn_flock((spawn_x, altitude, spawn_z))
             
             # Set cooldown to prevent spawning too many flocks at once
-            self.spawn_cooldown = random.uniform(5.0, 15.0)
+            self.spawn_cooldown = random.uniform(8.0, 20.0)  # Longer cooldown
         
-        # Update active flocks
-        for flock in self.flocks:
-            if flock.active:
-                flock.update(dt, player_position, current_time)
+        # NEW: Only update a subset of flocks each frame
+        # Select a few random flocks to update each frame to spread out the processing
+        flocks_to_update = min(5, len(self.flocks))  # Max 5 flocks per frame
+        if flocks_to_update > 0:
+            for flock in random.sample(self.flocks, flocks_to_update):
+                if flock.active:
+                    flock.update(dt, player_position, current_time)
+
+
+
+
+
+
     
     def draw(self, camera_position):
         """Render all active bird flocks."""

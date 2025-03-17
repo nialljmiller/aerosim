@@ -506,7 +506,7 @@ class InfiniteTerrain:
                 terrain=self  # Pass reference to self
             )
         return self.chunks[chunk_key]
-        
+
     
     def update_chunks(self, camera_position):
         """Update which chunks are loaded based on camera position."""
@@ -545,11 +545,20 @@ class InfiniteTerrain:
             self.chunks[chunk_key].cleanup()
             # Remove from dictionary
             del self.chunks[chunk_key]
-        
+
+
+
+                
+        # NEW: Limit the number of new chunks per frame to reduce stuttering
+        max_chunks_per_frame = 2  # Only load 2 new chunks per frame to spread the load
+        chunk_count = 0
         # Load new chunks
         for chunk_key in chunks_to_load:
+            chunk_count =+1
             if chunk_key not in self.chunks:
                 self.get_or_create_chunk(*chunk_key)
+            if chunk_count == max_chunks_per_frame:
+                break
 
 
     def get_height(self, world_x, world_z):
