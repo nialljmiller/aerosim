@@ -18,6 +18,7 @@ try:
     import bird_system
     import weather_effects as cloud_system  # Import the cloud and weather system
     import water_system
+    import plane_model_renderer
 except ImportError as e:
     print(f"Import error: {e}")
     print("Please ensure all required modules are in the current directory.")
@@ -29,167 +30,6 @@ def rotate_vector(v, axis, angle):
     return (v * np.cos(angle) +
             np.cross(axis, v) * np.sin(angle) +
             axis * np.dot(axis, v) * (1 - np.cos(angle)))
-
-def draw_detailed_plane(plane):
-    """Draw a slightly more complex wireframe plane model in local space.
-       Local axes: +X = forward, +Y = up, +Z = right.
-    """
-    # Set color based on damage
-    damage_factor = plane.damage
-    undamaged_color = (1.0, 1.0, 0.0)  # Yellow
-    damaged_color = (1.0, 0.0, 0.0)    # Red
-    color = (
-        undamaged_color[0] * (1-damage_factor) + damaged_color[0] * damage_factor,
-        undamaged_color[1] * (1-damage_factor) + damaged_color[1] * damage_factor,
-        undamaged_color[2] * (1-damage_factor) + damaged_color[2] * damage_factor
-    )
-    
-    # Draw fuselage
-    glColor3f(*color)
-    glBegin(GL_LINE_LOOP)
-    glVertex3f(1, 0, 0)  # Nose
-    glVertex3f(-1, 0.5, 0)  # Top back
-    glVertex3f(-1, -0.5, 0)  # Bottom back
-    glEnd()
-
-    # Draw fuselage (side view)
-    glBegin(GL_LINE_LOOP)
-    glVertex3f(1, 0, 0)  # Nose
-    glVertex3f(-1, 0, 0.5)  # Right back
-    glVertex3f(-1, 0, -0.5)  # Left back
-    glEnd()
-
-    # Draw wings (a quad) - BIGGER WINGS
-    glColor3f(0, 1, 1)  # cyan
-    glBegin(GL_LINE_LOOP)
-    glVertex3f(0, 0, -3)  # Left wing tip
-    glVertex3f(0, 0, 3)   # Right wing tip
-    glVertex3f(-0.5, 0, 3)  # Right wing back
-    glVertex3f(-0.5, 0, -3)  # Left wing back
-    glEnd()
-    
-    # Draw wing details (ribs and struts) for visual effect
-    glBegin(GL_LINES)
-    # Main spar
-    glVertex3f(-0.25, 0, -3)
-    glVertex3f(-0.25, 0, 3)
-    
-    # Wing ribs
-    for i in range(-2, 3):
-        glVertex3f(0, 0, i)
-        glVertex3f(-0.5, 0, i)
-    glEnd()
-
-    # Draw vertical tail (a small triangle)
-    glColor3f(1, 0, 1)  # magenta
-    glBegin(GL_LINE_LOOP)
-    glVertex3f(-0.8, 0, 0)    # Bottom
-    glVertex3f(-0.8, 1, 0)    # Top
-    glVertex3f(-1, 0, 0)      # Back
-    glEnd()
-    
-    # Draw horizontal stabilizer (tail wing)
-    glBegin(GL_LINE_LOOP)
-    glVertex3f(-0.9, 0, -1)  # Left tip
-    glVertex3f(-0.9, 0, 1)   # Right tip
-    glVertex3f(-1, 0, 1)     # Right back
-    glVertex3f(-1, 0, -1)    # Left back
-    glEnd()
-# Here's the corrected draw_plane function that should replace the one in your plane.py file
-
-def draw_plane(plane):
-    """Draw the plane using the enhanced detailed model."""
-    glPushMatrix()
-    # First translate to the plane's position
-    glTranslatef(plane.position[0], plane.position[1], plane.position[2])
-    
-    # Build a rotation matrix from the plane's basis vectors (COLUMN-MAJOR ORDER for OpenGL)
-    # Each column represents one of the plane's basis vectors
-    matrix = [
-        plane.forward[0], plane.forward[1], plane.forward[2], 0,
-        plane.up[0], plane.up[1], plane.up[2], 0,
-        plane.right[0], plane.right[1], plane.right[2], 0,
-        0, 0, 0, 1
-    ]
-    glMultMatrixf(matrix)
-    
-    # Get wireframe_mode from the global namespace or default to False
-    try:
-        # Look for wireframe_mode in global scope
-        import sys
-        global_wireframe_mode = False
-        frame = sys._getframe(1)
-        if 'wireframe_mode' in frame.f_globals:
-            global_wireframe_mode = frame.f_globals['wireframe_mode']
-    except:
-        global_wireframe_mode = False
-    
-    # Draw the enhanced plane model with all details
-    draw_detailed_plane(plane)#, global_wireframe_mode)
-    
-    # Optional: Draw velocity vector for debugging
-    glColor3f(1, 0, 0)  # Red for velocity
-    glBegin(GL_LINES)
-    glVertex3f(0, 0, 0)
-    # Scale velocity vector for better visualization
-    vel_scale = 0.1
-    glVertex3f(
-        plane.velocity[0] * vel_scale,
-        plane.velocity[1] * vel_scale,
-        plane.velocity[2] * vel_scale
-    )
-    glEnd()
-    
-    # Draw collision points for debugging (useful to see where the plane is touching the ground)
-    for collision in plane.collision_points:
-        if 'wheel' in collision:
-            # Wheel collision point - draw in green
-            world_point = collision['world_point']
-            normal = collision['normal']
-            
-            glPushMatrix()
-            glTranslatef(world_point[0] - plane.position[0], 
-                        world_point[1] - plane.position[1], 
-                        world_point[2] - plane.position[2])
-            glColor3f(0, 1, 0)  # Green for wheel contact
-            try:
-                from OpenGL.GLUT import glutSolidSphere
-                glutSolidSphere(0.2, 8, 8)  # Small sphere
-            except:
-                # Fallback if GLUT is not available
-                pass
-            
-            # Draw the terrain normal
-            glBegin(GL_LINES)
-            glVertex3f(0, 0, 0)
-            glVertex3f(normal[0], normal[1], normal[2])
-            glEnd()
-            glPopMatrix()
-        elif 'point_idx' in collision:
-            # Regular collision point - draw in red
-            world_point = collision['world_point']
-            normal = collision['normal']
-            
-            glPushMatrix()
-            glTranslatef(world_point[0] - plane.position[0], 
-                        world_point[1] - plane.position[1], 
-                        world_point[2] - plane.position[2])
-            glColor3f(1, 0, 0)  # Red for collision
-            try:
-                from OpenGL.GLUT import glutSolidSphere
-                glutSolidSphere(0.2, 8, 8)  # Small sphere
-            except:
-                # Fallback if GLUT is not available
-                pass
-            
-            # Draw the terrain normal
-            glBegin(GL_LINES)
-            glVertex3f(0, 0, 0)
-            glVertex3f(normal[0], normal[1], normal[2])
-            glEnd()
-            glPopMatrix()
-    
-    glPopMatrix()
 
 def create_enhanced_plane(params, initial_position, initial_velocity):
     """Create an instance of the enhanced plane model with the specified parameters."""
@@ -975,7 +815,7 @@ def main():
             
             # Draw plane
             try:
-                draw_plane(plane)
+                plane_model_renderer.draw_plane(plane)
             except Exception as e:
                 print(f"Error drawing plane: {e}")
             
@@ -988,20 +828,7 @@ def main():
                 
             time_info = f"TIME: {celestial.get_time_of_day_string()}" if celestial is not None else ""
             
-            # Get gear and flaps status for HUD
-            gear_status = ""
-            if hasattr(plane, 'gear_state'):
-                if plane.gear_state > 0.99:
-                    gear_status = "LANDING GEAR: DOWN"
-                elif plane.gear_state < 0.01:
-                    gear_status = "LANDING GEAR: UP"
-                else:
-                    gear_status = f"LANDING GEAR: {int(plane.gear_state * 100)}%"
 
-            flaps_status = ""
-            if hasattr(plane, 'flaps'):
-                flaps_status = f"FLAPS: {int(plane.flaps * 100)}%"
-            
             sky_texts = [
                 "FLIGHT SIMULATOR",
                 f"SPEED: {speed:.1f} m/s",
@@ -1011,11 +838,6 @@ def main():
                 time_info,
             ]
 
-            # Add gear and flaps status if available
-            if gear_status:
-                sky_texts.append(gear_status)
-            if flaps_status:
-                sky_texts.append(flaps_status)
 
             sky_texts.extend([
                 f"POSITION: X:{plane.position[0]:.0f} Y:{plane.position[1]:.0f} Z:{plane.position[2]:.0f}",
@@ -1070,17 +892,7 @@ def main():
                 except Exception as e:
                     print(f"Error drawing night text: {e}")
             
-            # Display landing gear warning when appropriate
-            if hasattr(plane, 'gear_state') and plane.gear_state < 0.5 and height_above_ground < 100 and speed < 30:
-                gear_warning_text = [
-                    "WARNING: LANDING GEAR NOT DEPLOYED",
-                    "PRESS G TO LOWER LANDING GEAR"
-                ]
-                try:
-                    draw_sky_text(gear_warning_text, (plane.position[0], plane.position[1] + 8, plane.position[2]))
-                except Exception as e:
-                    print(f"Error drawing gear warning text: {e}")
-            
+
             # Update the display
             pygame.display.flip()
             
