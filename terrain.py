@@ -9,6 +9,16 @@ import math
 from OpenGL.GL import *
 from OpenGL.GLU import *
 import random
+# In the imports section, add:
+import os
+import sys
+try:
+    from biome_manager import BiomeManager
+    has_biome_manager = True
+except ImportError:
+    print("Warning: BiomeManager not available, using default terrain generation")
+    has_biome_manager = False
+
 
 class PerlinNoise:
     """Deterministic Perlin noise implementation using NumPy."""
@@ -88,11 +98,16 @@ class PerlinNoise:
 
 class TerrainChunk:
     """Individual chunk of procedurally generated terrain."""
-    def __init__(self, chunk_x, chunk_z, chunk_size, resolution, noise_generator):
+
+
+    def __init__(self, chunk_x, chunk_z, chunk_size, resolution, noise_generator, terrain=None):
         self.chunk_x = chunk_x  # Chunk position in world (grid coordinates)
         self.chunk_z = chunk_z
         self.chunk_size = chunk_size  # Size of each chunk in world units
         self.resolution = resolution  # Resolution within chunk (vertex spacing)
+        
+        # Store reference to parent terrain system
+        self.terrain = terrain
         
         # World space coordinates of this chunk
         self.world_x = chunk_x * chunk_size
@@ -108,7 +123,8 @@ class TerrainChunk:
         # Generate heightmap and colors
         self.generate_data()
         self.compile_display_lists()
-    
+
+   
     def generate_data(self):
         """Generate heightmap and color data for this chunk."""
         # Calculate grid size within this chunk
@@ -118,9 +134,8 @@ class TerrainChunk:
         self.heightmap = np.zeros((grid_size, grid_size))
         self.color_data = np.zeros((grid_size, grid_size, 3))
         
-        # Noise configuration
-        noise_scale = 0.005  # Controls terrain scale/frequency
-        height_scale = 40.0  # Controls terrain height
+        # Check if biome manager is available through terrain instance
+        has_biome_manager = hasattr(self.terrain, 'biome_manager') and self.terrain.biome_manager is not None
         
         # Generate height values for each vertex
         for i in range(grid_size):
@@ -129,64 +144,78 @@ class TerrainChunk:
                 world_x = self.world_x + i * self.resolution
                 world_z = self.world_z + j * self.resolution
                 
-                # Base terrain using fractal noise
-                base_height = self.noise.fractal(
-                    world_x * noise_scale, 
-                    world_z * noise_scale,
-                    octaves=6,
-                    persistence=0.5
-                )
-                
-                # Add medium-scale variation
-                medium_detail = self.noise.fractal(
-                    world_x * noise_scale * 4, 
-                    world_z * noise_scale * 4,
-                    octaves=3
-                ) * 0.25
-                
-                # Simple river system - create rivers where noise value is within range
-                river_noise = self.noise.fractal(
-                    world_x * noise_scale * 2 + 500, 
-                    world_z * noise_scale * 2 + 500,
-                    octaves=1
-                )
-                
-                river_factor = 0
-                if 0.48 < river_noise < 0.53:
-                    # Create river beds
-                    river_depth = 10.0
-                    river_dist = min(abs(river_noise - 0.48), abs(river_noise - 0.53))
-                    river_factor = (1.0 - river_dist / 0.05) * river_depth
-                
-                # Create some mountains in some regions
-                mountain_mask = self.noise.fractal(
-                    world_x * noise_scale * 0.25, 
-                    world_z * noise_scale * 0.25,
-                    octaves=2
-                )
-                
-                mountain_factor = 0
-                if mountain_mask > 0.55:
-                    # Add mountains
-                    mountain_height = self.noise.fractal(
-                        world_x * noise_scale * 0.5, 
-                        world_z * noise_scale * 0.5,
-                        octaves=4
+                if has_biome_manager:
+                    # Use biome manager for height
+                    height = self.terrain.biome_manager.get_height(world_x, world_z)
+                    
+                    # Store height
+                    self.heightmap[i, j] = height
+                    
+                    # Assign color using biome manager
+                    color = self.terrain.biome_manager.get_color(world_x, world_z, height)
+                    self.color_data[i, j] = color
+                else:
+                    # Original terrain generation code - keep as fallback
+                    noise_scale = 0.005
+                    height_scale = 40.0
+                    
+                    # Base terrain using fractal noise
+                    base_height = self.noise.fractal(
+                        world_x * noise_scale, 
+                        world_z * noise_scale,
+                        octaves=6,
+                        persistence=0.5
                     )
-                    mountain_factor = (mountain_mask - 0.55) * 2.0 * 60 * mountain_height
-                
-                # Calculate final height
-                height = (base_height + medium_detail) * height_scale
-                height = height - river_factor + mountain_factor
-                
-                # Ensure minimum terrain height
-                height = max(0.5, height)
-                
-                # Store height
-                self.heightmap[i, j] = height
-                
-                # Assign color based on height and features
-                self.assign_color(i, j, height, river_factor > 0)
+                    
+                    # Medium-scale variation
+                    medium_detail = self.noise.fractal(
+                        world_x * noise_scale * 4, 
+                        world_z * noise_scale * 4,
+                        octaves=3
+                    ) * 0.25
+                    
+                    # Simple river system
+                    river_noise = self.noise.fractal(
+                        world_x * noise_scale * 2 + 500, 
+                        world_z * noise_scale * 2 + 500,
+                        octaves=1
+                    )
+                    
+                    river_factor = 0
+                    if 0.48 < river_noise < 0.53:
+                        river_depth = 10.0
+                        river_dist = min(abs(river_noise - 0.48), abs(river_noise - 0.53))
+                        river_factor = (1.0 - river_dist / 0.05) * river_depth
+                    
+                    # Create mountains in some regions
+                    mountain_mask = self.noise.fractal(
+                        world_x * noise_scale * 0.25, 
+                        world_z * noise_scale * 0.25,
+                        octaves=2
+                    )
+                    
+                    mountain_factor = 0
+                    if mountain_mask > 0.55:
+                        mountain_height = self.noise.fractal(
+                            world_x * noise_scale * 0.5, 
+                            world_z * noise_scale * 0.5,
+                            octaves=4
+                        )
+                        mountain_factor = (mountain_mask - 0.55) * 2.0 * 60 * mountain_height
+                    
+                    # Calculate final height
+                    height = (base_height + medium_detail) * height_scale
+                    height = height - river_factor + mountain_factor
+                    
+                    # Ensure minimum terrain height
+                    height = max(0.5, height)
+                    
+                    # Store height
+                    self.heightmap[i, j] = height
+                    
+                    # Assign color based on height and features
+                    self.assign_color(i, j, height, river_factor > 0)
+
     
     def assign_color(self, i, j, height, is_river):
         """Assign colors based on terrain features."""
@@ -431,40 +460,53 @@ class TerrainChunk:
             glDeleteLists(self.display_list_wireframe, 1)
 
 class InfiniteTerrain:
-    """Manager for dynamically generated infinite terrain."""
+
     def __init__(self, chunk_size=100, resolution=5, view_distance=800):
-        self.chunk_size = chunk_size  # Size of each chunk in world units
-        self.resolution = resolution  # Distance between vertices
-        self.view_distance = view_distance  # How far to render chunks
+        self.chunk_size = chunk_size
+        self.resolution = resolution
+        self.view_distance = view_distance
         
         # Seed for consistent terrain generation
         self.seed = 42
         self.noise = PerlinNoise(seed=self.seed)
         
-        # Dictionary to store loaded chunks (key: (chunk_x, chunk_z))
+        # Initialize biome manager if available
+        self.biome_manager = None
+        if has_biome_manager:
+            try:
+                self.biome_manager = BiomeManager(self.noise, biome_scale=2000.0)
+                print("Biome manager initialized successfully")
+            except Exception as e:
+                print(f"Error initializing biome manager: {e}")
+                self.biome_manager = None
+        
+        # Dictionary to store loaded chunks
         self.chunks = {}
         
         # Track the center position for chunk loading/unloading
         self.last_center_chunk = None
-    
+
     def get_chunk_position(self, world_x, world_z):
         """Convert world coordinates to chunk coordinates."""
         chunk_x = math.floor(world_x / self.chunk_size)
         chunk_z = math.floor(world_z / self.chunk_size)
         return chunk_x, chunk_z
-    
+
+
     def get_or_create_chunk(self, chunk_x, chunk_z):
         """Get an existing chunk or create a new one if it doesn't exist."""
         chunk_key = (chunk_x, chunk_z)
         if chunk_key not in self.chunks:
-            # Create new chunk
+            # Create new chunk with reference to self (terrain)
             self.chunks[chunk_key] = TerrainChunk(
                 chunk_x, chunk_z, 
                 self.chunk_size, 
                 self.resolution,
-                self.noise
+                self.noise,
+                terrain=self  # Pass reference to self
             )
         return self.chunks[chunk_key]
+        
     
     def update_chunks(self, camera_position):
         """Update which chunks are loaded based on camera position."""
@@ -508,9 +550,19 @@ class InfiniteTerrain:
         for chunk_key in chunks_to_load:
             if chunk_key not in self.chunks:
                 self.get_or_create_chunk(*chunk_key)
-    
+
+
     def get_height(self, world_x, world_z):
         """Get terrain height at any world position."""
+        # Use biome manager if available
+        if self.biome_manager is not None:
+            try:
+                return self.biome_manager.get_height(world_x, world_z)
+            except Exception as e:
+                print(f"Error in biome height generation: {e}")
+                # Fall back to chunk-based height if biome manager fails
+        
+        # Original chunk-based method as fallback
         chunk_x, chunk_z = self.get_chunk_position(world_x, world_z)
         chunk_key = (chunk_x, chunk_z)
         
@@ -531,15 +583,12 @@ class InfiniteTerrain:
         
         # Ensure minimum height
         return max(0.5, base_height)
-    
+
+    # In the InfiniteTerrain class, update the get_terrain_normal method:
     def get_terrain_normal(self, world_x, world_z):
         """Calculate terrain normal at any world position."""
-        chunk_x, chunk_z = self.get_chunk_position(world_x, world_z)
-        chunk_key = (chunk_x, chunk_z)
-        
-        # If the chunk is loaded, query it
-        if chunk_key in self.chunks:
-            return self.chunks[chunk_key].get_normal(world_x, world_z)
+        # Use the height-based gradient method regardless of whether biome manager
+        # is used, since we need to be consistent with get_height method
         
         # For unloaded chunks, calculate normal on-the-fly
         epsilon = 0.1  # Small offset for normal calculation
@@ -564,6 +613,17 @@ class InfiniteTerrain:
             normal = np.array([0, 1, 0])  # Default up normal
             
         return normal
+
+    # Add this method to InfiniteTerrain class to get the current biome:
+    def get_current_biome(self, world_x, world_z):
+        """Get the biome type at the specified world position."""
+        if self.biome_manager is not None:
+            try:
+                return self.biome_manager.get_biome_at_position(world_x, world_z)
+            except Exception as e:
+                print(f"Error getting biome at position: {e}")
+                return "unknown"
+        return "default"  # Default if biome manager is not available
     
     def draw(self, wireframe=False):
         """Draw all loaded terrain chunks."""
